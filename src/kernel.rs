@@ -29,11 +29,11 @@
 //!     kept as a direct poke for manual re-registration of
 //!     historical roots.
 //!
-//! Peek paths (see `hoon/app/app.hoon::peek`):
-//!   `/owner/<name>`, `/primary/<addr>`, `/entries`, `/claim-count`,
-//!   `/last-settled`, `/hull`, `/root`, `/snapshot`, `/proof/<name>`,
-//!   `/pending-batch`, plus the graft's `/registered/<hull>`,
-//!   `/settled/<note-id>`, `/root/<hull>`.
+//! Peek paths (see `hoon/app/app.hoon::peek`): `/kernel-debug` (structured
+//! snapshot for HTTP), `/accumulator/...`, `/scan-state`, **`/owner/<name>`,
+//! `/primary/<addr>`, `/entries`, `/claim-count`, `/last-settled`, `/hull`,
+//! `/root`, `/snapshot`, `/proof/<name>`, `/pending-batch`**, plus the graft's
+//! **`/registered/<hull>`, `/settled/<note-id>`, `/root/<hull>`**.
 
 use nock_noun_rs::{
     atom_from_u64, jam_to_bytes, make_atom_in, make_cord_in, make_tag_in, new_stack, NounSlab,
@@ -1261,6 +1261,144 @@ pub fn build_accumulator_root_peek() -> NounSlab {
 /// `PathY4LookupBundle.accumulator_snapshot_jam_hex`).
 pub fn build_accumulator_jam_peek() -> NounSlab {
     single_tag_peek("accumulator-jam")
+}
+
+/// Build `/kernel-debug ~` peek path slab.
+///
+/// Kernel response: fixed tuple — see [`decode_kernel_debug`].
+pub fn build_kernel_debug_peek() -> NounSlab {
+    single_tag_peek("kernel-debug")
+}
+
+/// Decode `[~ ~ *]` from `/kernel-debug` into [`crate::types::KernelDebugResponse`].
+pub fn decode_kernel_debug(result: &NounSlab) -> Result<crate::types::KernelDebugResponse, String> {
+    use crate::state::hex_encode;
+
+    let inner = peek_unwrap_some(result)?;
+    let (ver_n, n0) = uncons(inner)?;
+    let ver = ver_n
+        .as_atom()
+        .map_err(|_| "kernel-debug: version not atom".to_string())?
+        .as_u64()
+        .map_err(|_| "kernel-debug: version not u64".to_string())?;
+    if ver != 0 {
+        return Err(format!("kernel-debug: unknown version {ver}"));
+    }
+
+    let (h_n, n1) = uncons(n0)?;
+    let (digest_n, n2) = uncons(n1)?;
+    let (root_n, n3) = uncons(n2)?;
+    let (size_n, n4) = uncons(n3)?;
+    let (acc_list_n, n5) = uncons(n4)?;
+    let (reg_list_n, n6) = uncons(n5)?;
+    let (settled_n, lp_n) = uncons(n6)?;
+
+    let last_proved_height = h_n
+        .as_atom()
+        .map_err(|_| "kernel-debug: height not atom".to_string())?
+        .as_u64()
+        .map_err(|_| "kernel-debug: height overflows u64".to_string())?;
+    let last_proved_digest_hex = hex_encode(&atom_to_le_bytes(digest_n)?);
+    let accumulator_root_hex = hex_encode(&atom_to_le_bytes(root_n)?);
+    let accumulator_size = size_n
+        .as_atom()
+        .map_err(|_| "kernel-debug: size not atom".to_string())?
+        .as_u64()
+        .map_err(|_| "kernel-debug: size overflows u64".to_string())?;
+
+    let mut names = Vec::new();
+    for row_n in hoon_list_elements(acc_list_n)? {
+        names.push(decode_kernel_debug_name_row(row_n)?);
+    }
+
+    let mut registered = Vec::new();
+    for pair_n in hoon_list_elements(reg_list_n)? {
+        let (hull_n, root_pair_n) = uncons(pair_n)?;
+        registered.push(crate::types::KernelDebugVeslRegistered {
+            hull_id_hex: hex_encode(&atom_to_le_bytes(hull_n)?),
+            merkle_root_hex: hex_encode(&atom_to_le_bytes(root_pair_n)?),
+        });
+    }
+
+    let mut settled_note_ids_hex = Vec::new();
+    for id_n in hoon_list_elements(settled_n)? {
+        settled_note_ids_hex.push(hex_encode(&atom_to_le_bytes(id_n)?));
+    }
+
+    let last_proved = decode_optional_jam_pair(lp_n)?;
+
+    Ok(crate::types::KernelDebugResponse {
+        version: ver,
+        last_proved_height,
+        last_proved_digest_hex,
+        accumulator_root_hex,
+        accumulator_size,
+        names,
+        vesl: crate::types::KernelDebugVesl {
+            registered,
+            settled_note_ids_hex,
+        },
+        last_proved,
+    })
+}
+
+fn uncons(n: Noun) -> Result<(Noun, Noun), String> {
+    let c = n
+        .as_cell()
+        .map_err(|_| "kernel-debug: expected cell".to_string())?;
+    Ok((c.head(), c.tail()))
+}
+
+fn hoon_list_elements(mut n: Noun) -> Result<Vec<Noun>, String> {
+    let mut out = Vec::new();
+    loop {
+        if n.as_atom().is_ok() {
+            break;
+        }
+        let cell = n
+            .as_cell()
+            .map_err(|_| "kernel-debug: malformed list".to_string())?;
+        out.push(cell.head());
+        n = cell.tail();
+    }
+    Ok(out)
+}
+
+fn decode_kernel_debug_name_row(n: Noun) -> Result<crate::types::KernelDebugNameEntry, String> {
+    use crate::state::hex_encode;
+    let (name_n, r1) = uncons(n)?;
+    let (owner_n, r2) = uncons(r1)?;
+    let (tx_n, r3) = uncons(r2)?;
+    let (ch_n, bd_n) = uncons(r3)?;
+    Ok(crate::types::KernelDebugNameEntry {
+        name: atom_to_cord(name_n)?,
+        owner: atom_to_cord(owner_n)?,
+        tx_hash_hex: hex_encode(&atom_to_le_bytes(tx_n)?),
+        claim_height: ch_n
+            .as_atom()
+            .map_err(|_| "kernel-debug: claim_height not atom".to_string())?
+            .as_u64()
+            .map_err(|_| "kernel-debug: claim_height overflows u64".to_string())?,
+        block_digest_hex: hex_encode(&atom_to_le_bytes(bd_n)?),
+    })
+}
+
+fn decode_optional_jam_pair(n: Noun) -> Result<Option<crate::types::KernelDebugLastProved>, String> {
+    use crate::state::hex_encode;
+    if n.as_atom().is_ok() {
+        return Ok(None);
+    }
+    let uc = n
+        .as_cell()
+        .map_err(|_| "kernel-debug: last_proved not unit".to_string())?;
+    let pair = uc.tail();
+    let pc = pair
+        .as_cell()
+        .map_err(|_| "kernel-debug: last_proved inner not pair".to_string())?;
+    Ok(Some(crate::types::KernelDebugLastProved {
+        subject_jam_hex: hex_encode(&atom_to_le_bytes(pc.head())?),
+        formula_jam_hex: hex_encode(&atom_to_le_bytes(pc.tail())?),
+    }))
 }
 
 /// Build a `/scan-state ~` peek path slab.

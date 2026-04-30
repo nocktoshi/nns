@@ -10,6 +10,7 @@
 //!   GET /status
 //!   GET /accumulator/:name — registered names only (`404` if absent);
 //!     `?wallet_export=true` adds `accumulator_snapshot_hex`
+//!   GET /debug/kernel-state — structured snapshot (`NNS_DEBUG_HTTP=1`)
 //!
 //! CORS is open (`*`) to match legacy behavior.
 
@@ -26,11 +27,12 @@ use tower_http::cors::{Any, CorsLayer};
 
 use crate::kernel::{
     build_accumulator_jam_peek, build_accumulator_peek, build_accumulator_proof_peek,
-    build_scan_state_peek, decode_accumulator_entry, decode_accumulator_jam,
-    decode_accumulator_proof_axis, decode_scan_state,
+    build_kernel_debug_peek, build_scan_state_peek, decode_accumulator_entry,
+    decode_accumulator_jam, decode_accumulator_proof_axis, decode_kernel_debug,
+    decode_scan_state,
 };
 use crate::state::{hex_encode, SharedState};
-use crate::types::{AccumulatorLookupResponse, AccumulatorValueResponse};
+use crate::types::{AccumulatorLookupResponse, AccumulatorValueResponse, KernelDebugResponse};
 
 // ---------------------------------------------------------------------------
 // Validation
@@ -112,6 +114,7 @@ pub fn router(state: SharedState) -> Router {
         .route("/health", get(health))
         .route("/status", get(status))
         .route("/accumulator/:name", get(accumulator_handler))
+        .route("/debug/kernel-state", get(debug_kernel_state))
         .layer(cors)
         .with_state(state)
 }
@@ -127,6 +130,7 @@ pub async fn serve(
     println!("  GET /health");
     println!("  GET /status");
     println!("  GET /accumulator/:name (?wallet_export=1)");
+    println!("  GET /debug/kernel-state");
     axum::serve(listener, router(state)).await?;
     Ok(())
 }
@@ -137,6 +141,22 @@ pub async fn serve(
 
 async fn health() -> Json<serde_json::Value> {
     Json(json!({ "status": "ok" }))
+}
+
+async fn debug_kernel_state(
+    State(state): State<SharedState>,
+) -> Result<Json<KernelDebugResponse>, (StatusCode, Json<ErrorBody>)> {
+    let mut k = state.kernel.lock().await;
+    let body = k
+        .peek(build_kernel_debug_peek())
+        .await
+        .map_err(|e| server_error(format!("kernel kernel-debug peek failed: {e:?}")))
+        .and_then(|slab| {
+            decode_kernel_debug(&slab).map_err(|e| server_error(format!("decode kernel-debug: {e}")))
+        })?;
+    drop(k);
+
+    Ok(Json(body))
 }
 
 async fn accumulator_handler(

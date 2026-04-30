@@ -13,9 +13,9 @@
 # --- Settlement mode ---
 # v1 runs in local: kernel verifies, no chain interaction.
 # Flip to "fakenet" or "dumbnet" to enable chain posting (requires chain_endpoint + key).
-settlement_mode = "local"
+settlement_mode = "dumbnet"
 
 # --- Chain settings (fakenet/dumbnet only) ---
-# chain_endpoint = "https://localhost:5556"
+chain_endpoint = "https://rpc.nockchain.net"
 # tx_fee = 256
 # accept_timeout_secs = 300

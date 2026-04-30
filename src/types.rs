@@ -254,6 +254,47 @@ pub struct ProofAnchor {
     pub tip_height: u64,
 }
 
+/// `GET /debug/kernel-state` body (`NNS_DEBUG_HTTP=1`).
+#[derive(Debug, Clone, Serialize)]
+pub struct KernelDebugResponse {
+    pub version: u64,
+    pub last_proved_height: u64,
+    pub last_proved_digest_hex: String,
+    pub accumulator_root_hex: String,
+    pub accumulator_size: u64,
+    pub names: Vec<KernelDebugNameEntry>,
+    pub vesl: KernelDebugVesl,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_proved: Option<KernelDebugLastProved>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KernelDebugNameEntry {
+    pub name: String,
+    pub owner: String,
+    pub tx_hash_hex: String,
+    pub claim_height: u64,
+    pub block_digest_hex: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KernelDebugVesl {
+    pub registered: Vec<KernelDebugVeslRegistered>,
+    pub settled_note_ids_hex: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KernelDebugVeslRegistered {
+    pub hull_id_hex: String,
+    pub merkle_root_hex: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KernelDebugLastProved {
+    pub subject_jam_hex: String,
+    pub formula_jam_hex: String,
+}
+
 /// `GET /accumulator/:name` Path Y lookup response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccumulatorLookupResponse {

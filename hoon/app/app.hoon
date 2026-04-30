@@ -585,12 +585,39 @@
   ::    /accumulator-jam     -> @ (jam of full nns-accumulator noun)
   ::    /scan-state          -> [height=@ud digest=@ux root=@ size=@ud]
   ::    /fee-for-name/<n>    -> @ud
+  ::    /kernel-debug        -> fixed tuple for HTTP debug (see Rust decode)
   ::    [anything else]      -> vesl-peek
   ::
   ++  peek
     |=  =path
     ^-  (unit (unit *))
     ?+  path  (vesl-peek vesl.state path)
+        [%kernel-debug ~]
+      =/  acc=(list [name=@t nns-accumulator-entry:na])
+        (to-list:na accumulator.state)
+      =/  acc-out=(list [name=@t owner=@t tx=@ux claim-height=@ud block-digest=@ux])
+        %+  turn  acc
+        |=  [name=@t en=nns-accumulator-entry:na]
+        [name owner.en tx-hash.en claim-height.en block-digest.en]
+      =/  acc-sorted
+        %+  sort  acc-out
+        |=  [[a=@t *] [b=@t *]]
+        (lth a b)
+      =/  reg-list=(list [@ @])
+        %+  sort  ~(tap by registered.vesl.state)
+        |=  [a=[h=@ *] b=[h=@ *]]
+        (lth h.a h.b)
+      =/  settled-list=(list @)
+        %+  sort  ~(tap in settled.vesl.state)
+        |=  [a=@ b=@]
+        (lth a b)
+      =/  lp-out=(unit [@ @])
+        ?~  last-proved.state
+          ~
+        [~ [(jam subject.u.last-proved.state) (jam formula.u.last-proved.state)]]
+      ::  [ver=@ud h=@ud digest=@ux root=@ size=@ud acc reg settled lp]
+      ``[0 last-proved-height.state last-proved-digest.state (root-atom:na accumulator.state) (size:na accumulator.state) acc-sorted reg-list settled-list lp-out]
+        ::
         [%accumulator name=@t ~]
       =/  key=@t  +<.path
       ``(get:na [accumulator.state key])

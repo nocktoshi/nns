@@ -70,6 +70,25 @@ fn format_candidates_for_log(candidates: &[ClaimCandidate]) -> String {
 /// finalized backlog exists, consecutive `%scan-block` steps run back-to-back.
 const FOLLOWER_POLL: Duration = Duration::from_secs(10);
 
+/// When the block endpoint returns **429 / 5xx** (rate limit, bad gateway, etc.),
+/// wait longer so we do not hammer a stressed proxy. The gRPC client often
+/// reports a misleading *"invalid compression flag: 101"* in that case: the
+/// HTTP body is usually HTML/JSON, not a valid gRPC frame; the first byte
+/// (e.g. `e` from *error* / HTML) is misread as a compression byte.
+const FOLLOWER_POLL_STRESSED: Duration = Duration::from_secs(60);
+
+fn is_upstream_stressed(err: &str) -> bool {
+    let e = err.to_lowercase();
+    e.contains("429")
+        || e.contains("too many requests")
+        || e.contains("502")
+        || e.contains("bad gateway")
+        || e.contains("503")
+        || e.contains("service unavailable")
+        || e.contains("504")
+        || e.contains("gateway timeout")
+}
+
 /// How far behind the chain tip the follower waits before committing a
 /// block to the kernel scan cursor. Keeps Path Y scans free of short
 /// reorgs without waiting on economic finality.
@@ -98,7 +117,7 @@ fn follower_scan_batch_blocks() -> u64 {
 pub fn spawn(state: SharedState) -> JoinHandle<()> {
     tokio::spawn(async move {
         loop {
-            let idle = match scan_once(&state).await {
+            let (idle, stressed) = match scan_once(&state).await {
                 Ok(Some(scanned)) => {
                     tracing::info!(
                         height_end = scanned.height,
@@ -106,27 +125,34 @@ pub fn spawn(state: SharedState) -> JoinHandle<()> {
                         phase = "scan_block",
                         "chain follower scanned blocks"
                     );
-                    false
+                    (false, false)
                 }
                 Ok(None) => {
                     tracing::trace!(phase = "scan_block", "scan tick no-op");
-                    true
+                    (true, false)
                 }
                 Err(err) => {
                     let ts = crate::state::AppState::now_epoch_ms();
                     let mut h = state.hull.lock().await;
                     h.follower.record_error("scan_block", err.clone(), ts);
                     drop(h);
+                    let stressed = is_upstream_stressed(&err);
                     tracing::warn!(
                         err = %err,
                         phase = "scan_block",
+                        stressed,
                         "chain follower scan tick failed"
                     );
-                    true
+                    (true, stressed)
                 }
             };
             if idle {
-                tokio::time::sleep(FOLLOWER_POLL).await;
+                let wait = if stressed {
+                    FOLLOWER_POLL_STRESSED
+                } else {
+                    FOLLOWER_POLL
+                };
+                tokio::time::sleep(wait).await;
             } else {
                 tokio::task::yield_now().await;
             }
