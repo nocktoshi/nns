@@ -270,33 +270,139 @@ pub async fn scan_once(state: &SharedState) -> Result<Option<ScanBlockOutcome>, 
     let heights: Vec<u64> = (next_height..=batch_end).collect();
 
     let prefetched = prefetch_scan_blocks_for_heights(&endpoint, &heights).await?;
-    validate_scan_block_chain(scan_state.last_proved_digest.as_slice(), &prefetched)?;
 
     let batch_lo = prefetched
         .first()
         .map(|b| b.height)
         .unwrap_or(next_height);
-    let blocks_applied = prefetched.len() as u64;
+    let batch_end = prefetched
+        .last()
+        .map(|b| b.height)
+        .unwrap_or(next_height);
 
-    let mut last_done = None;
-
-    for block in &prefetched {
-        let candidates = extract_claim_candidates(&block.tx_details)?;
-
-        tracing::debug!(
-            chain_tip = current_chain_tip,
+    apply_prefetched_scan_blocks_inner(
+        state,
+        prefetched,
+        Some(FollowerScanTrace {
+            chain_tip: current_chain_tip,
             finalized_height,
             batch_lo,
             batch_end,
-            height = block.height,
-            parent = %atom_hex_preview(&block.parent, 16),
-            page_digest = %atom_hex_preview(&block.page_digest, 16),
-            page_tx_count = block.page_tx_ids.len(),
-            page_tx_ids_preview = %format_tx_id_previews(&block.page_tx_ids, 8),
-            claim_candidates_count = candidates.len(),
-            claim_candidates = %format_candidates_for_log(&candidates),
-            "chain_follower: %scan-block poke payload (Tip5 atoms are LE 40B; compare with kernel last_proved_digest)"
-        );
+        }),
+        None,
+    )
+    .await
+}
+
+/// Trace context for follower logs (optional for integration tests).
+pub(crate) struct FollowerScanTrace {
+    pub chain_tip: u64,
+    pub finalized_height: u64,
+    pub batch_lo: u64,
+    pub batch_end: u64,
+}
+
+/// Apply prefetched blocks in ascending height order with `%scan-block` pokes.
+///
+/// The first block's `parent` must match the kernel's current `last_proved_digest`
+/// (unless still at genesis boot), and each subsequent block must link to the
+/// previous block's page digest.
+///
+/// Used by [`scan_once`] and integration tests that replay RPC-backed
+/// [`crate::chain::ScanBlockFetch`] batches without starting the follower loop.
+pub async fn apply_prefetched_scan_blocks(
+    state: &SharedState,
+    prefetched: Vec<crate::chain::ScanBlockFetch>,
+) -> Result<Option<ScanBlockOutcome>, String> {
+    apply_prefetched_scan_blocks_inner(state, prefetched, None, None).await
+}
+
+/// Like [`apply_prefetched_scan_blocks`], but supplies explicit claim candidates per block
+/// (skips gRPC-shaped transaction extraction). Used by integration tests that construct
+/// canonical `%scan-block` payloads directly (e.g. minimal `@ux` tx-id atoms).
+pub async fn apply_prefetched_scan_blocks_with_candidates(
+    state: &SharedState,
+    prefetched: Vec<crate::chain::ScanBlockFetch>,
+    candidates_per_block: Vec<Vec<ClaimCandidate>>,
+) -> Result<Option<ScanBlockOutcome>, String> {
+    if prefetched.len() != candidates_per_block.len() {
+        return Err(format!(
+            "candidates_per_block length {} does not match prefetched blocks {}",
+            candidates_per_block.len(),
+            prefetched.len()
+        ));
+    }
+    apply_prefetched_scan_blocks_inner(state, prefetched, None, Some(candidates_per_block)).await
+}
+
+async fn apply_prefetched_scan_blocks_inner(
+    state: &SharedState,
+    prefetched: Vec<crate::chain::ScanBlockFetch>,
+    trace: Option<FollowerScanTrace>,
+    injected_candidates: Option<Vec<Vec<ClaimCandidate>>>,
+) -> Result<Option<ScanBlockOutcome>, String> {
+    if prefetched.is_empty() {
+        return Ok(None);
+    }
+
+    let scan_state = {
+        let peek_result = {
+            let mut k = state.kernel.lock().await;
+            k.peek(build_scan_state_peek()).await
+        };
+        match peek_result {
+            Ok(result) => {
+                decode_scan_state(&result).map_err(|e| format!("scan-state decode failed: {e}"))?
+            }
+            Err(e) => {
+                let msg = format!("scan-state peek failed: {e:?}");
+                let ts = crate::state::AppState::now_epoch_ms();
+                let mut h = state.hull.lock().await;
+                h.follower.record_error("scan_peek", msg.clone(), ts);
+                return Err(msg);
+            }
+        }
+    };
+
+    validate_scan_block_chain(scan_state.last_proved_digest.as_slice(), &prefetched)?;
+
+    let blocks_applied = prefetched.len() as u64;
+    let mut last_done = None;
+
+    for (idx, block) in prefetched.iter().enumerate() {
+        let candidates = if let Some(ref inj) = injected_candidates {
+            inj
+                .get(idx)
+                .cloned()
+                .ok_or_else(|| format!("injected candidates missing for block index {idx}"))?
+        } else {
+            extract_claim_candidates(&block.tx_details)?
+        };
+
+        if let Some(t) = trace.as_ref() {
+            tracing::debug!(
+                chain_tip = t.chain_tip,
+                finalized_height = t.finalized_height,
+                batch_lo = t.batch_lo,
+                batch_end = t.batch_end,
+                height = block.height,
+                parent = %atom_hex_preview(&block.parent, 16),
+                page_digest = %atom_hex_preview(&block.page_digest, 16),
+                page_tx_count = block.page_tx_ids.len(),
+                page_tx_ids_preview = %format_tx_id_previews(&block.page_tx_ids, 8),
+                claim_candidates_count = candidates.len(),
+                claim_candidates = %format_candidates_for_log(&candidates),
+                "chain_follower: %scan-block poke payload (Tip5 atoms are LE 40B; compare with kernel last_proved_digest)"
+            );
+        } else {
+            tracing::debug!(
+                height = block.height,
+                parent = %atom_hex_preview(&block.parent, 16),
+                page_digest = %atom_hex_preview(&block.page_digest, 16),
+                claim_candidates_count = candidates.len(),
+                "chain_follower (test harness): %scan-block poke"
+            );
+        }
 
         let poke_result = {
             let mut k = state.kernel.lock().await;
@@ -375,7 +481,7 @@ pub async fn scan_once(state: &SharedState) -> Result<Option<ScanBlockOutcome>, 
     };
 
     let now = crate::state::AppState::now_epoch_ms();
-    {
+    if trace.is_some() {
         let mut h = state.hull.lock().await;
         h.follower.record_advance(done.height, blocks_applied, now);
     }
@@ -386,6 +492,11 @@ pub async fn scan_once(state: &SharedState) -> Result<Option<ScanBlockOutcome>, 
         accumulator_root: done.accumulator_root,
         blocks_applied,
     }))
+}
+
+/// Extract NNS claim candidates from one prefetched block (for tests / tooling).
+pub fn claim_candidates_from_fetch(block: &crate::chain::ScanBlockFetch) -> Result<Vec<crate::kernel::ClaimCandidate>, String> {
+    extract_claim_candidates(&block.tx_details)
 }
 
 fn extract_claim_candidates(details: &[TransactionDetails]) -> Result<Vec<ClaimCandidate>, String> {

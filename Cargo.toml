@@ -13,7 +13,7 @@ path = "src/lib.rs"
 
 [dependencies]
 # NockVM — sibling clone at ~/nockchain
-nockapp = { path = "../nockchain/crates/nockapp", default-features = false }
+nockapp = { path = "../nockchain/crates/nockapp", default-features = false, features = ["slog-tracing"] }
 nockvm = { path = "../nockchain/crates/nockvm/rust/nockvm" }
 nockvm_macros = { path = "../nockchain/crates/nockvm/rust/nockvm_macros" }
 nockapp-grpc = { path = "../nockchain/crates/nockapp-grpc" }

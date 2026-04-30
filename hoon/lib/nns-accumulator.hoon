@@ -67,19 +67,79 @@
   ?:  (~(has z-by acc) name)  acc
   (~(put z-by acc) name entry)
 ::
-::  +root: Tip5 noun-digest of the accumulator.
+::  +atom-u32-le: split an atom into little-endian base-2^32 limbs (each
+::  limb fits in a Goldilocks belt). Avoids feeding one enormous `%leaf`
+::  through `hash-noun-varlen`, which assumes belt-shaped atoms along
+::  structural walks.
+::
+++  atom-u32-le
+  |=  a=@
+  ^-  (list @)
+  |-  ^-  (list @)
+  ?:  =(0 a)  ~
+  =/  qr  (dvr a (bex 32))
+  [+.qr $(a -.qr)]
+::
+::  +hashable-atom-chunks: encode arbitrary `@` as `%list` of small
+::  `%leaf` limbs (Tip5 `hash-hashable` `%list` branch).
+::
+++  hashable-atom-chunks
+  |=  a=@
+  ^-  hashable:tip5:z
+  [%list (turn (atom-u32-le a) |=(w=@ leaf+w))]
+::
+::  +hashable-entry: canonical hashable view of one accumulator row's
+::  value (owner cord, hashes, height).
+::
+++  hashable-entry
+  |=  ent=nns-accumulator-entry
+  ^-  hashable:tip5:z
+  =/  lis=(list hashable:tip5:z)
+    :~  (hashable-atom-chunks owner.ent)
+        (hashable-atom-chunks tx-hash.ent)
+        leaf+claim-height.ent
+        (hashable-atom-chunks block-digest.ent)
+    ==
+  [%list lis]
+::
+::  +hashable-accumulator: sorted `(list [`@t` entry])` as nested
+::  hashables — keys ascending by numeric `@t` order (same as `lth` on
+::  cords in `dor-tip`).
+::
+++  hashable-accumulator
+  |=  acc=nns-accumulator
+  ^-  hashable:tip5:z
+  =/  rows=(list [@t nns-accumulator-entry])
+    %+  sort  ~(tap z-by acc)
+    |=  [[a=@t *] [b=@t *]]
+    (lth a b)
+  =/  lis=(list hashable:tip5:z)
+    %+  turn  rows
+    |=  [n=@t e=nns-accumulator-entry]
+    :-  (hashable-atom-chunks n)
+    (hashable-entry e)
+  [%list lis]
+::
+::  +root-from-hashable: Tip5 digest of `++hashable-accumulator`.
+::
+++  root-from-hashable
+  |=  acc=nns-accumulator
+  ^-  noun-digest:tip5:z
+  (hash-hashable:tip5:z (hashable-accumulator acc))
+::
+::  +root: Tip5 noun-digest of the accumulator (hashable encoding).
 ::
 ++  root
   |=  acc=nns-accumulator
   ^-  noun-digest:tip5:z
-  (tip acc)
+  (root-from-hashable acc)
 ::
 ::  +root-atom: `root` flattened to a single `@`.
 ::
 ++  root-atom
   |=  acc=nns-accumulator
   ^-  @
-  (digest-to-atom:tip5:z (tip acc))
+  (digest-to-atom:tip5:z (root-from-hashable acc))
 ::
 ++  size
   |=  acc=nns-accumulator

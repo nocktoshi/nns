@@ -45,9 +45,10 @@ pub(crate) fn unpack_wallet_blob_jam(jam: &[u8]) -> Result<Vec<u8>, String> {
         .ok_or_else(|| "invalid length-prefixed packed blob".to_string())
 }
 
-/// Encode inner payload the same way the wallet does ([`crate::claim_note`] tests only).
-#[cfg(test)]
-pub(crate) fn pack_wallet_blob_jam(payload: &[u8]) -> Vec<u8> {
+/// Encode inner payload the same way the wallet does ([`wallet-tx-builder`][claim]).
+///
+/// [claim]: https://github.com/nockchain/nockchain/blob/master/crates/wallet-tx-builder/src/note_data.rs
+pub fn pack_wallet_blob_jam(payload: &[u8]) -> Vec<u8> {
     use nockapp::noun::slab::{NockJammer, NounSlab};
     use noun_serde::NounEncode;
 
