@@ -53,7 +53,7 @@ only scans heights `≤ chain_tip − finality_depth`.
 | B.1 | Start `nns`, `curl -s http://127.0.0.1:3000/status \| jq` | HTTP 200; `settlement_mode` is `local`; `chain_endpoint` null or absent. |
 | B.2 | Inspect `scan_state` | `last_proved_height` **0** (or documented boot height); `accumulator_size` **0** on fresh `.nns-data/`. |
 | B.3 | `GET /accumulator/nonexistent.nock` | 200; `value` absent; coherent `last_proved_height` / `accumulator_root`. |
-| B.4 | `POST /claim` or other removed Path A routes | **404** — confirms hull is read-only for claims. |
+| B.4 | `POST /claim` or other removed write routes | **404** — confirms hull is read-only for claims. |
 
 **Why:** Separates “kernel + HTTP shell works” from gRPC / finality.
 

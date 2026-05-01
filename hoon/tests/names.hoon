@@ -284,8 +284,8 @@
 ::
 ::  ============================================
 ::  Empty batch: vacuously accepted by the gate itself.
-::  The kernel's %settle-batch arm rejects empty batches at the
-::  layer above, but the gate has no reason to fail on "nothing
+::  A full kernel would reject an empty settlement batch before the
+::  gate, but the gate has no reason to fail on "nothing
 ::  to disprove" — `(list)` == `~` is a valid value for `data`.
 ::  ============================================
 ::

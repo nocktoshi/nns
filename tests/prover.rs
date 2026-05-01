@@ -1,39 +1,43 @@
-//! Phase 0 acceptance test: produce a real non-recursive STARK from
-//! NNS's `%prove-batch` path and verify it via `verify:sp-verifier`.
+//! Phase 0 acceptance test: produce a real STARK via the kernel's
+//! `%prove-arbitrary` cause (`prove-computation:vp` with a small Nock trace).
 //!
-//! Requires the STARK prover jets and a Large NockStack. Marked
-//! `#[ignore]` so it does NOT run in default `cargo test`; run
-//! explicitly with:
+//! Baseline uses `%prove-arbitrary` (accumulator + `%scan-block` kernel);
+//! older batch-settlement prover causes are not in `$cause`.
+//!
+//! Requires the STARK prover jets and a Large NockStack. Marked `#[ignore]`.
+//! Run explicitly with:
 //!
 //!   cargo test --test prover phase0_baseline_prove_and_verify -- --nocapture --ignored
 //!
-//! Records wall-clock, proof size, and (via jemalloc/OS tools) peak
-//! memory externally. The numbers feed the appendix of
-//! [docs/research/recursive-payment-proof.md].
+//! Records wall-clock and proof size for [docs/research/recursive-payment-proof.md].
 
 use std::sync::Arc;
 use std::time::Instant;
 
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
-use nns_vesl::kernel::{
-    build_prove_arbitrary_poke, build_prove_batch_poke, build_prove_claim_in_stark_poke,
-    build_prove_identity_poke, build_prove_recursive_step_poke, build_verify_stark_poke,
-    first_arbitrary_proof, first_batch_proof, first_batch_settled, first_claim_in_stark_proof,
-    first_prove_failed, first_prove_identity_result, first_recursive_step_dry_run_ok,
-    first_recursive_step_proof, first_validate_claim_result, first_verify_stark_error,
-    first_verify_stark_result, AnchorHeader, ClaimBundle, ClaimWitness, InStarkValidation,
-    ValidateClaimResult,
+use nns_vesl::chain::ScanBlockFetch;
+use nns_vesl::chain_follower::{
+    apply_prefetched_scan_blocks, apply_prefetched_scan_blocks_with_candidates,
 };
+use nns_vesl::kernel::{
+    build_prove_arbitrary_poke, build_prove_claim_in_stark_poke,
+    build_prove_identity_poke, build_prove_recursive_step_poke, build_verify_stark_poke,
+    first_arbitrary_proof, first_claim_in_stark_proof,
+    first_prove_failed, first_prove_identity_result, first_recursive_step_dry_run_ok,
+    first_recursive_step_proof, first_verify_stark_error,
+    first_verify_stark_result, AnchorHeader, ClaimBundle, ClaimWitness, InStarkValidation,
+    ClaimCandidate,
+    build_scan_state_peek,
+    decode_scan_state,
+};
+use nns_vesl::payment::{fee_for_name, TREASURY_LOCK_ROOT_B58};
 use nns_vesl::{api, state::AppState};
 use nockapp::kernel::boot;
 use nockapp::kernel::boot::NockStackSize;
 use nockapp::wire::{SystemWire, Wire};
 use nockapp::NockApp;
 
-/// Same canonical lock root as `matches-treasury` in the kernel / `src/payment.rs`.
-const DEFAULT_TREASURY_LOCK_ROOT_B58: &str =
-    "A3LoWjxurwiyzhkv8sgDv2MVu9PwgWHmqoncXw9GEQ5M3qx46svvadE";
 use tower::util::ServiceExt;
 use vesl_core::SettlementConfig;
 
@@ -103,55 +107,146 @@ async fn request_json(
     (status, body)
 }
 
-async fn register_and_claim(router: axum::Router, addr: &str, name: &str) {
-    let (status, body) = request_json(
-        router.clone(),
-        "POST",
-        "/register",
-        Some(&format!(r#"{{"address":"{addr}","name":"{name}"}}"#)),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "register {name}: {body}");
-
-    let (status, body) = request_json(
-        router,
-        "POST",
-        "/claim",
-        Some(&format!(
-            r#"{{"address":"{addr}","name":"{name}","txHash":"tx-{name}"}}"#
-        )),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "claim {name}: {body}");
+fn digest40(seed: u8) -> Vec<u8> {
+    vec![seed; 40]
 }
 
-/// Phase 0 acceptance: one `%prove-batch` produces a real STARK.
+fn scan_block_stub(
+    height: u64,
+    parent: Vec<u8>,
+    page_digest: Vec<u8>,
+    page_tx_ids: Vec<Vec<u8>>,
+) -> ScanBlockFetch {
+    ScanBlockFetch {
+        height,
+        page_digest,
+        parent,
+        page_tx_ids,
+        tx_details: vec![],
+    }
+}
+
+fn synthetic_claim_candidate(
+    name: &str,
+    owner: &str,
+    tx_atom_byte: u8,
+    treasury_nicks: u64,
+) -> ClaimCandidate {
+    let fee = fee_for_name(name);
+    let tx = vec![tx_atom_byte];
+    ClaimCandidate {
+        name: name.to_string(),
+        owner: owner.to_string(),
+        fee,
+        tx_hash: tx.clone(),
+        witness: ClaimWitness {
+            tx_id: tx.clone(),
+            spender_pkh: owner.as_bytes().to_vec(),
+            treasury_amount: treasury_nicks,
+            output_lock_root: TREASURY_LOCK_ROOT_B58.to_string(),
+        },
+    }
+}
+
+async fn peek_last_proved_digest(state: &nns_vesl::state::SharedState) -> Vec<u8> {
+    let mut k = state.kernel.lock().await;
+    let slab = k
+        .peek(build_scan_state_peek())
+        .await
+        .expect("scan-state peek");
+    decode_scan_state(&slab)
+        .expect("decode scan-state")
+        .last_proved_digest
+}
+
+/// Path Y: inject a successful claim into the kernel [`nns_vesl::chain_follower`]-style
+/// (`%scan-block` + synthetic candidates), matching production registration. Legacy
+/// `POST /register` + `POST /claim` are removed — the HTTP API is read-only.
+async fn register_name_via_scan(state: &nns_vesl::state::SharedState, addr: &str, name: &str) {
+    let treasury = fee_for_name(name);
+    let tx_byte = name.bytes().fold(0x07_u8, |a, b| a.wrapping_add(b));
+
+    let mut parent = peek_last_proved_digest(state).await;
+    let d1 = digest40(tx_byte.wrapping_add(0x10));
+    let d2 = digest40(tx_byte.wrapping_add(0x20));
+
+    let b1 = scan_block_stub(1, parent.clone(), d1.clone(), vec![]);
+    apply_prefetched_scan_blocks(state, vec![b1])
+        .await
+        .expect("apply scan block 1")
+        .expect("scan outcome block 1");
+    parent = peek_last_proved_digest(state).await;
+
+    let b2 = scan_block_stub(2, parent, d2, vec![vec![tx_byte]]);
+    let candidates = vec![synthetic_claim_candidate(name, addr, tx_byte, treasury)];
+    apply_prefetched_scan_blocks_with_candidates(state, vec![b2], vec![candidates])
+        .await
+        .expect("apply scan block 2")
+        .expect("scan outcome block 2");
+
+    let router = api::router(state.clone());
+    let (status, body) = request_json(
+        router,
+        "GET",
+        &format!("/accumulator/{name}"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "accumulator must list name after scan: {body}"
+    );
+    assert_eq!(body["name"], name, "response name");
+    let value = body["value"].as_object().expect("accumulator value object");
+    assert_eq!(
+        value["owner"].as_str().expect("owner"),
+        addr,
+        "accumulator owner must match claiming address"
+    );
+}
+
+/// Subject `42` and formula `[4 [4 [4 [0 1]]]]` (three Nock-4 increments) — same trace as
+/// `phase3c_step3_prove_arbitrary_roundtrip`; avoids degenerate table heights from `[0 1]` alone.
+fn baseline_prove_arbitrary_jams() -> (Vec<u8>, Vec<u8>) {
+    use nock_noun_rs::{jam_to_bytes, new_stack, Cell, D};
+
+    let mut sub_stack = new_stack();
+    let subject_jam = jam_to_bytes(&mut sub_stack, D(42));
+
+    let mut form_stack = new_stack();
+    let base = Cell::new(&mut form_stack, D(0), D(1)).as_noun();
+    let inc1 = Cell::new(&mut form_stack, D(4), base).as_noun();
+    let inc2 = Cell::new(&mut form_stack, D(4), inc1).as_noun();
+    let formula_noun = Cell::new(&mut form_stack, D(4), inc2).as_noun();
+    let formula_jam = jam_to_bytes(&mut form_stack, formula_noun);
+
+    (subject_jam, formula_jam)
+}
+
+/// Phase 0 acceptance: one `%prove-arbitrary` produces a real STARK (`%arbitrary-proof`).
 ///
 /// Expected runtime: minutes. Expected memory: >8 GB. Run on PC only.
 #[ignore]
 #[tokio::test]
 async fn phase0_baseline_prove_and_verify() {
     let (_tmp, state) = boot_nns_with_prover().await;
-    let router = api::router(state.clone());
 
-    // Populate the registry with a small batch (one name is enough for
-    // baseline timing; increase later for amortization numbers).
-    register_and_claim(router.clone(), ADDR1, "alpha.nock").await;
+    // Realistic kernel state (accumulator row) — `stark-bind` uses scan cursor + accumulator.
+    register_name_via_scan(&state, ADDR1, "alpha.nock").await;
 
-    // Fire %prove-batch directly on the nockapp. We bypass HTTP here
-    // so we get back the raw effects and can extract proof bytes
-    // without a new endpoint (endpoint wiring is Phase 2+).
-    let prove_poke = build_prove_batch_poke();
+    let (subject_jam, formula_jam) = baseline_prove_arbitrary_jams();
+    let prove_poke = build_prove_arbitrary_poke(&subject_jam, &formula_jam);
 
     let start = Instant::now();
     let effects = {
         let mut k = state.kernel.lock().await;
         k.poke(SystemWire.to_wire(), prove_poke)
             .await
-            .expect("%prove-batch poke must complete")
+            .expect("%prove-arbitrary poke must complete")
     };
     let elapsed = start.elapsed();
-    println!("[phase0] %prove-batch wall-clock: {:.3?}", elapsed);
+    println!("[phase0] %prove-arbitrary wall-clock: {:.3?}", elapsed);
     println!("[phase0] {} effects produced", effects.len());
 
     if let Some(trace_jam) = first_prove_failed(&effects) {
@@ -161,39 +256,25 @@ async fn phase0_baseline_prove_and_verify() {
         );
     }
 
-    let settled = first_batch_settled(&effects)
-        .expect("prove-batch should produce a %batch-settled effect on success");
+    let ap = first_arbitrary_proof(&effects)
+        .expect("%prove-arbitrary should emit %arbitrary-proof");
     println!(
-        "[phase0] settled batch: claim-count={} count={} note-id-len={}",
-        settled.claim_count,
-        settled.count,
-        settled.note_id.len()
+        "[phase0] product jam {} B, proof jam {} B",
+        ap.product_jam.len(),
+        ap.proof_jam.len()
     );
+    assert!(!ap.proof_jam.is_empty(), "proof bytes must be non-empty");
 
-    let proof = first_batch_proof(&effects)
-        .expect("prove-batch should produce a %batch-proof effect on success");
-    println!("[phase0] proof jam bytes: {}", proof.proof_jam.len());
-    assert!(!proof.proof_jam.is_empty(), "proof bytes must be non-empty");
-    assert_eq!(
-        proof.note_id, settled.note_id,
-        "proof note-id must match settled note-id"
-    );
-
-    // The jammed proof is a valid nock noun. Confirm it CUEs back so
-    // downstream light-client verification paths can consume it.
     use nock_noun_rs::{cue_from_bytes, new_stack};
     let mut stack = new_stack();
-    let _cued = cue_from_bytes(&mut stack, &proof.proof_jam)
+    let _cued = cue_from_bytes(&mut stack, &ap.proof_jam)
         .expect("proof jam must cue back into a valid noun");
 
-    // NOTE: Full on-kernel verification via `verify:sp-verifier` is
-    // a follow-up — this baseline only confirms the prover produced
-    // a structured noun. Phase 1-redo embeds the verifier call to
-    // measure recursion overhead.
-    let _ = state; // keep alive for drop cleanup
+    // NOTE: Full on-kernel verification via `%verify-stark` is phase1-redo / phase3c-step3.
+    let _ = state;
 }
 
-/// Phase 1-redo: after `%prove-batch`, run `verify:nock-verifier` on
+/// Phase 1-redo: after `%prove-arbitrary`, run `verify:nock-verifier` on
 /// the same proof JAM via `%verify-stark`. Records wall-clock for
 /// verify alone and a **sequential-work proxy** (prove + verify) for
 /// recursion sizing — the verifier is not executed *inside*
@@ -242,8 +323,7 @@ async fn phase1_redo_verify_inner_proof_wall_clock() {
         kj.len(),
         std::env::var("NNS_KERNEL_JAM").ok()
     );
-    let router = api::router(state.clone());
-    register_and_claim(router, ADDR1, "beta.nock").await;
+    register_name_via_scan(&state, ADDR1, "beta.nock").await;
 
     let bad_poke = build_verify_stark_poke(&[0xab, 0xcd]);
     let bad_fx = {
@@ -261,13 +341,14 @@ async fn phase1_redo_verify_inner_proof_wall_clock() {
             .collect::<Vec<_>>()
     );
 
-    let prove_poke = build_prove_batch_poke();
+    let (subject_jam, formula_jam) = baseline_prove_arbitrary_jams();
+    let prove_poke = build_prove_arbitrary_poke(&subject_jam, &formula_jam);
     let t_prove = Instant::now();
     let effects = {
         let mut k = state.kernel.lock().await;
         k.poke(SystemWire.to_wire(), prove_poke)
             .await
-            .expect("%prove-batch poke must complete")
+            .expect("%prove-arbitrary poke must complete")
     };
     let prove_elapsed = t_prove.elapsed();
 
@@ -277,21 +358,21 @@ async fn phase1_redo_verify_inner_proof_wall_clock() {
             trace_jam.len()
         );
     }
-    let proof = first_batch_proof(&effects).expect("%batch-proof");
+    let ap = first_arbitrary_proof(&effects).expect("%arbitrary-proof");
     println!(
-        "[phase1-redo] %prove-batch wall-clock: {:.3?} (proof jam {} B)",
+        "[phase1-redo] %prove-arbitrary wall-clock: {:.3?} (proof jam {} B)",
         prove_elapsed,
-        proof.proof_jam.len()
+        ap.proof_jam.len()
     );
 
     use nock_noun_rs::{cue_from_bytes, new_stack};
     let mut cstack = new_stack();
     assert!(
-        cue_from_bytes(&mut cstack, &proof.proof_jam).is_some(),
+        cue_from_bytes(&mut cstack, &ap.proof_jam).is_some(),
         "proof JAM must cue in Rust before kernel verify"
     );
 
-    let verify_poke = build_verify_stark_poke(&proof.proof_jam);
+    let verify_poke = build_verify_stark_poke(&ap.proof_jam);
     let t_verify = Instant::now();
     let vfx = {
         let mut k = state.kernel.lock().await;
@@ -349,7 +430,7 @@ async fn phase1_redo_verify_inner_proof_wall_clock() {
 ///   - The committed product matches the caller's expectation.
 ///   - The emitted proof verifies via `%verify-stark` — confirming
 ///     that arbitrary user formulas can be proved + verified, not
-///     just the hard-coded `fs-formula` from `%prove-batch`.
+///     a retired batch-style formula from an older kernel revision.
 ///
 /// Marked `#[ignore]` because it's prover-heavy (~5 s).
 #[ignore]
@@ -486,7 +567,7 @@ async fn phase3c_step3_validator_in_stark_blocked_upstream() {
             tx_id: tx_hash,
             spender_pkh: b"owner-addr".to_vec(),
             treasury_amount: 327_680_000,
-            output_lock_root: DEFAULT_TREASURY_LOCK_ROOT_B58.to_string(),
+            output_lock_root: TREASURY_LOCK_ROOT_B58.to_string(),
         },
     };
 

@@ -1,39 +1,29 @@
 //! NockApp poke construction + effect/peek inspection.
 //!
-//! The kernel is a `data-registry`-shaped NockApp with the Vesl
-//! graft wired in. Four poke shapes are in use:
+//! Kernel helpers for `hoon/app/app.hoon`: **`v0-state`** holds an
+//! **`nns-accumulator`**, scan cursor (`last-proved-height` /
+//! `last-proved-digest`), Vesl graft state, and optional **`last-proved`**
+//! for STARK prove/verify helpers.
 //!
-//!   - `%claim` — hot path. The hull sends one per `POST /claim`
-//!     and the kernel writes `names` + `tx-hashes`, bumps the
-//!     claim-count counter, recomputes the Merkle root over the full
-//!     `names` map, and auto-registers a fresh hull in the graft.
-//!     Effects: `%claimed`, optional `%primary-set`,
-//!     `%claim-count-bumped`, and graft's `%vesl-registered`. Returns
-//!     `%claim-error <msg>` on a user-visible failure without
-//!     mutating state.
+//! Representative **`$cause`** tags this crate builds or inspects:
 //!
-//!   - `%set-primary` — owner-gated reverse-lookup update. Writes
-//!     `primaries` only; does NOT bump the claim-count. Effects:
-//!     `%primary-set` on success, `%primary-error <msg>` on
-//!     rejection.
+//!   - **`%scan-block`** — follower ingests one chain block’s claim
+//!     candidates into the accumulator.
+//!   - **`%prove-arbitrary`**, **`%prove-claim-in-stark`**,
+//!     **`%prove-recursive-step`**, **`%prove-identity`** — STARK
+//!     prover exercises (`prove-computation:vp`); effects include
+//!     `%arbitrary-proof`, `%claim-in-stark-proof`, etc.
+//!   - **`%verify-stark`**, **`%verify-stark-explicit`** — read-only
+//!     verifier benchmarks / wallet offline paths.
+//!   - **`%validate-claim`**, **`%verify-chain-link`**, … — predicate
+//!     bundles used ahead of expensive work.
+//!   - **`vesl-cause`** — graft-injected `%vesl-register` /
+//!     `%vesl-settle` shapes where still wired.
 //!
-//!   - `%settle-batch` — batch settlement. Kernel-side: selects
-//!     every name with `entry.claim-count > last-settled-claim-id`,
-//!     builds one `graft-payload` holding the whole batch, and
-//!     internally dispatches a single `%vesl-settle`. Effects:
-//!     `%batch-settled claim-id count note-id` plus graft's
-//!     `%vesl-settled` on success, or `%batch-error <msg>` when
-//!     there is nothing to settle, or `%vesl-error` passthrough.
-//!
-//!   - `%vesl-register` — normally driven by `%claim` internally;
-//!     kept as a direct poke for manual re-registration of
-//!     historical roots.
-//!
-//! Peek paths (see `hoon/app/app.hoon::peek`): `/kernel-debug` (structured
-//! snapshot for HTTP), `/accumulator/...`, `/scan-state`, **`/owner/<name>`,
-//! `/primary/<addr>`, `/entries`, `/claim-count`, `/last-settled`, `/hull`,
-//! `/root`, `/snapshot`, `/proof/<name>`, `/pending-batch`**, plus the graft's
-//! **`/registered/<hull>`, `/settled/<note-id>`, `/root/<hull>`**.
+//! Peek paths include **`/kernel-debug`**, **`/accumulator/...`**,
+//! **`/scan-state`**, owner/primary/entry snapshots as exposed in
+//! `app.hoon`, plus graft **`/registered/<hull>`**, **`/settled/<note-id>`**,
+//! **`/root/<hull>`** where applicable.
 
 use nock_noun_rs::{
     atom_from_u64, jam_to_bytes, make_atom_in, make_cord_in, make_tag_in, new_stack, NounSlab,
@@ -93,46 +83,6 @@ pub fn build_set_primary_poke(address: &str, name: &str) -> NounSlab {
     slab
 }
 
-/// Build a `[%settle-batch ~]` poke slab.
-///
-/// The kernel does the full batch construction internally: selects
-/// the pending window, computes every Merkle proof against the
-/// current root, bundles them into a single `graft-payload`, and
-/// pokes the graft with one `%vesl-settle`.
-///
-/// Kernel response:
-///
-///   - `[%batch-settled claim-id count note-id]` + graft's
-///     `[%vesl-settled note=[id hull root [%settled ~]]]` on success.
-///     The hull advances its `last-settled-claim-id` cache.
-///   - `[%batch-error 'nothing to settle']` when the pending window
-///     is empty (nothing new since the previous successful settle).
-///   - `[%vesl-error msg]` passthrough if the graft rejected the
-///     poke (e.g. the exact same batch was already settled).
-pub fn build_settle_batch_poke() -> NounSlab {
-    let mut slab = NounSlab::new();
-    let tag = make_tag_in(&mut slab, "settle-batch");
-    let poke = T(&mut slab, &[tag, D(0)]);
-    slab.set_root(poke);
-    slab
-}
-
-/// Build a `[%prove-batch ~]` poke slab.
-///
-/// Same batch-selection semantics as `%settle-batch` but additionally
-/// runs `prove-computation` over the jammed batch payload to produce
-/// a real STARK. On success the kernel emits a `[%batch-proof note-id
-/// proof]` effect alongside the usual `[%batch-settled ...]` + graft
-/// `[%vesl-settled ...]` effects. On prover crash the kernel emits
-/// `[%prove-failed trace-jam]` and does NOT apply settlement.
-pub fn build_prove_batch_poke() -> NounSlab {
-    let mut slab = NounSlab::new();
-    let tag = make_tag_in(&mut slab, "prove-batch");
-    let poke = T(&mut slab, &[tag, D(0)]);
-    slab.set_root(poke);
-    slab
-}
-
 /// Phase 1-redo sanity: `[%prove-identity ~]` poke. Kernel proves
 /// the trivial `[42 [0 1]]` computation and immediately verifies it,
 /// emitting `[%prove-identity-result ok=?]`. Used by the spike to
@@ -162,7 +112,7 @@ pub fn first_prove_identity_result(effects: &[NounSlab]) -> Option<bool> {
 }
 
 /// Build a `[%verify-stark blob=@]` poke slab. `blob` is the raw JAM
-/// bytes of a `proof` noun (e.g. from `%batch-proof`). The kernel cues
+/// bytes of a `proof` noun (e.g. from `%arbitrary-proof`). The kernel cues
 /// it and runs `verify:nock-verifier` with the same jets as block PoW
 /// verification. Emits `[%verify-stark-result ok=?]` or
 /// `[%verify-stark-error msg=@t]`.
@@ -2038,68 +1988,6 @@ pub fn vesl_settled(effect: &NounSlab) -> Option<VeslSettled> {
 
 pub fn first_vesl_settled(effects: &[NounSlab]) -> Option<VeslSettled> {
     effects.iter().find_map(vesl_settled)
-}
-
-/// Payload of a `[%batch-settled claim-count=@ud count=@ud note-id=@]`
-/// effect emitted by the kernel's `%settle-batch` arm. `claim-count` is
-/// the commitment at which the batch was packaged, which the hull
-/// stores as its new `last-settled-claim-id`.
-#[derive(Debug, Clone)]
-pub struct BatchSettled {
-    pub claim_count: u64,
-    pub count: u64,
-    pub note_id: Vec<u8>,
-}
-
-pub fn batch_settled(effect: &NounSlab) -> Option<BatchSettled> {
-    if effect_tag(effect)? != "batch-settled" {
-        return None;
-    }
-    let noun = unsafe { effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let rest = cell.tail().as_cell().ok()?;
-    let claim_count = rest.head().as_atom().ok()?.as_u64().ok()?;
-    let rest2 = rest.tail().as_cell().ok()?;
-    let count = rest2.head().as_atom().ok()?.as_u64().ok()?;
-    let note_id = rest2.tail().as_atom().ok()?.as_ne_bytes().to_vec();
-    Some(BatchSettled {
-        claim_count,
-        count,
-        note_id,
-    })
-}
-
-pub fn first_batch_settled(effects: &[NounSlab]) -> Option<BatchSettled> {
-    effects.iter().find_map(batch_settled)
-}
-
-/// Payload of a `[%batch-proof note-id=@ proof=*]` effect emitted by
-/// the kernel's `%prove-batch` arm on a successful STARK generation.
-/// `proof_jam` is the JAM'd bytes of the raw proof noun — opaque to
-/// the hull, suitable for transport, and CUE'able back into a noun
-/// for verification via `verify:sp-verifier`.
-#[derive(Debug, Clone)]
-pub struct BatchProof {
-    pub note_id: Vec<u8>,
-    pub proof_jam: Vec<u8>,
-}
-
-pub fn batch_proof(effect: &NounSlab) -> Option<BatchProof> {
-    if effect_tag(effect)? != "batch-proof" {
-        return None;
-    }
-    let noun = unsafe { *effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let rest = cell.tail().as_cell().ok()?;
-    let note_id = rest.head().as_atom().ok()?.as_ne_bytes().to_vec();
-    let proof_noun = rest.tail();
-    let mut stack = new_stack();
-    let proof_jam = jam_to_bytes(&mut stack, proof_noun);
-    Some(BatchProof { note_id, proof_jam })
-}
-
-pub fn first_batch_proof(effects: &[NounSlab]) -> Option<BatchProof> {
-    effects.iter().find_map(batch_proof)
 }
 
 /// Payload of a `[%prove-failed trace-jam=@]` effect emitted when the

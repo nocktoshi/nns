@@ -1,116 +1,16 @@
 ::  nns — .nock name registrar kernel.
 ::
-::  Pattern: data-registry (direct kernel state) + Vesl graft for
-::  settlement. This is the shape used by
-::  ~/vesl/templates/data-registry/hoon/app/app.hoon,
-::  generalized with the Vesl graft wired in so on-demand settlement
-::  proofs are one poke away.
+::  v0 kernel (`+$v0-state`): `nns-accumulator` + chain-scan cursor
+::  (`last-proved-height`, `last-proved-digest`) + `vesl-state` + optional
+::  `last-proved` for STARK prove/verify arms. The follower pokes
+::  `%scan-block` to merge on-chain `nns/v1/claim` notes in canonical
+::  block/tx order; `nns-predicates` / claim-scanner arms enforce name
+::  format, fee tiers, uniqueness, payment replay, and chain linkage.
 ::
-::  One address can own any number of names: the `names` map does
-::  not constrain owner uniqueness. A separate `primaries` map
-::  designates each owner's reverse-lookup target — the name that
-::  `GET /resolve?address=<x>` returns.
-::
-::  Settlement model:
-::
-::    A hull is an immutable commitment (see vesl-graft: "A given
-::    hull-id can hold exactly one root, forever."). The registry
-::    state is mutable (names get added). We reconcile these with
-::    a claim-count counter: every successful %claim bumps `claim-count`,
-::    recomputes the Merkle root over the entire `names` map, and
-::    registers a fresh hull with id `hull-for(claim-count)`.  The graft's
-::    `registered` map thus becomes an append-only history of
-::    claim-count -> root commitments. Any past commitment is still
-::    independently settleable as long as the caller still has the
-::    leaf and proof from that claim-count.
-::
-::    Settlement is batched: %settle-batch selects every name claimed
-::    since `last-settled-claim-id` (via the per-entry claim-count tag),
-::    builds one Merkle-inclusion payload covering all of them, and
-::    pokes the graft with a SINGLE %vesl-settle. The graft records one
-::    note whose id is a hash of the sorted batch contents, so replay
-::    protection is at the batch level.
-::
-::  Split of authority:
-::
-::    - names=(map @t [owner=@t tx-hash=@t claim-count=@ud])
-::        authoritative registry (name -> {owner, paying tx-hash,
-::        claim-count-at-which-added}). %claim writes it; name-uniqueness
-::        is enforced here. There is no constraint that a given owner
-::        appears only once — one address can own many names. The
-::        per-entry `claim-count` is kernel-local bookkeeping only; it
-::        is NOT part of the Merkle leaf content.
-::    - tx-hashes=(set @t)
-::        secondary index of payment tx-hashes that have been used
-::        to claim a name. %claim enforces tx-hash uniqueness here,
-::        so a single payment can only ever produce one registration.
-::    - primaries=(map @t @t)
-::        reverse-lookup index (owner-address -> the single name
-::        that address wants to resolve to). Written by %claim on
-::        first-claim-per-address, and by %set-primary thereafter.
-::        Uniqueness is in the map's key: one primary per address.
-::    - claim-count=@ud
-::        monotonic counter, bumped on every successful %claim.
-::        Hull ids are derived from it via `hull-for`, so re-using
-::        a hull is structurally impossible as long as we never
-::        roll back `claim-count`.
-::    - last-settled-claim-id=@ud
-::        monotonic counter tracking the highest `claim-count` that has
-::        been packaged into a settled batch. `%settle-batch` selects
-::        `{entry | entry.claim-count > last-settled-claim-id}` and, on
-::        success, advances this to the current `claim-count`. Invariant:
-::        `last-settled-claim-id <= claim-count`.
-::    - root=@
-::        cached Merkle root over `names` at the current `claim-count`.
-::        Re-computed on %claim (O(n)); peeks read it in O(1).
-::    - hull=@
-::        cached hull-id for the current `claim-count`
-::        (= `(hull-for claim-count)`). Cached for symmetry with `root`.
-::    - vesl=vesl-state
-::        graft bookkeeping. `registered` gets one entry per claim
-::        (the append-only commitment history); `settled` gets one
-::        entry per successful %vesl-settle (one per batch).
-::
-::  What the STARK-provable gate (nns-gate) enforces on %vesl-settle:
-::
-::    G1. Valid name format (lowercase/digit stem + .nock suffix) for
-::        every leaf in the batch.
-::    G2. Merkle inclusion: for every leaf, `jam([name owner tx-hash])`
-::        is committed by `expected-root` via that leaf's proof path.
-::        This binds a settlement to a specific set of (name, owner,
-::        tx-hash) triples at a specific committed registry snapshot.
-::
-::  Hot-path domain rules enforced by %claim (same rules as G1 plus
-::  uniqueness):
-::
-::    C1. Valid format (== G1). Crash on violation — honest hulls
-::        never send malformed names.
-::    C2. Fee tier: declared fee >= fee-for(name). Crash on
-::        violation (same reason).
-::    C3. Name must not already be in `names`. Duplicate emits
-::        [%claim-error 'name already registered'] and does not
-::        mutate state.
-::    C4. Paying tx-hash must not already be in `tx-hashes`.
-::        Duplicate emits [%claim-error 'payment already used']
-::        and does not mutate state.
-::    (On success, if the owner has no primary yet, the newly
-::     claimed name becomes their primary — %claim also emits
-::     [%primary-set owner name] alongside [%claimed ...].)
-::    (On success, the kernel also auto-registers a fresh hull:
-::     emits [%claim-count-bumped claim-count hull root] and passes through
-::     the graft's [%vesl-registered hull root]. The caller can
-::     use those plus `peek /proof/<name>` to build a settle
-::     payload any time.)
-::
-::  %set-primary rules:
-::
-::    P1. The target `name` must exist in `names`.
-::    P2. `names[name].owner` must equal the caller's declared
-::        `address`. No one but the owner can designate which of
-::        their names is primary.
-::    (Violations emit [%primary-error <msg>] without mutating.
-::     %set-primary does NOT bump claim-count: the `primaries` map is
-::     not part of the committed Merkle tree, only `names` is.)
+::  Vesl graft (`registered`, `settled`) and `nns-gate` back settlement /
+::  proof bundles where wired. Prover/verifier causes include
+::  `%prove-arbitrary`, `%prove-claim-in-stark`, `%verify-stark`, … — see
+::  `+$cause` below.
 ::
 ::  Compile: hoonc --new hoon/app/app.hoon hoon/
 ::

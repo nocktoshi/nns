@@ -50,8 +50,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state_dir = data_parent.join(".nns-data");
     fs::create_dir_all(&state_dir)?;
 
-    // Install the STARK prover hot state so the kernel's `%prove-batch`
-    // cause can produce real STARK artifacts. This is a no-op when the
+    // Install the STARK prover hot state so `%prove-arbitrary` /
+    // `%prove-claim-in-stark` can produce real STARK artifacts. No-op when
     // kernel never calls `prove-computation`, so it is safe to always
     // install; pokes that only touch %claim / %set-primary pay nothing
     // for the extra jets beyond module load time.

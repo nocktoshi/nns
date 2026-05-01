@@ -33,9 +33,7 @@ It preserves implementation details and historical findings, but deduplicates re
 ## 1.1 Decision
 NNS uses **Nockchain as sequencer**: canonical ordering of name claims comes from the chain, not from a private HTTP queue.
 
-On **this branch’s hull** that decision is implemented as **Path Y**: a read-only scanner pokes **`%scan-block`** so the kernel folds an **`nns-accumulator`** forward block-by-block (`last-proved-height`, `last-proved-digest`, optional recursive-proof plumbing). HTTP is **`GET /status`** and **`GET /accumulator/:name`** only; users submit **`nns/v1/claim`** notes to Nockchain directly (structured **NoteData** on outputs — wallets rarely support this yet; see [`docs/claim-note-wallet-support.md`](docs/claim-note-wallet-support.md) and [nockchain#85](https://github.com/nockchain/nockchain/pull/85)).
-
-The older **Path A** shape (HTTP `POST /claim`, Merkle `names` map, `GET /proof`, Phase 3c bundle + Phase 7 live chain-tip checks) remains documented below as **design history** and predicate reference; it is not what `src/api.rs` on this tree exposes.
+On **this branch’s hull** that decision is implemented as a read-only scanner: the follower pokes **`%scan-block`** so the kernel folds an **`nns-accumulator`** forward block-by-block (`last-proved-height`, `last-proved-digest`, optional recursive-proof plumbing). HTTP is **`GET /status`** and **`GET /accumulator/:name`** only; users submit **`nns/v1/claim`** notes to Nockchain directly (structured **NoteData** on outputs — see [`docs/claim-note-wallet-support.md`](docs/claim-note-wallet-support.md) and [nockchain#85](https://github.com/nockchain/nockchain/pull/85)).
 
 Full recursive rollup shape (target):
 
@@ -56,7 +54,7 @@ Wallet verifies recursive proof + accumulator binding + headers to a pinned chec
 
 There are **no** `--chain-tip`, `--max-staleness`, or Phase-7-style freshness flags on this path. The `src/freshness.rs` module may still exist for older types/tests but is not the Y4 wallet contract.
 
-## 1.2a Historical — Phase 3c option-B proof path (Path A kernel era)
+## 1.2a Historical — Phase 3c option-B proof path (superseded wallet packaging)
 Where the kernel still implemented **`%prove-claim`** over a **`claim-bundle`**, the production proof path was **Phase 3c step 2** (committed digest / option-B):
 
 ```text
@@ -110,7 +108,7 @@ Current decision:
 | 3c step 3 foundation | `has-tx-in-list`, `validate-claim-bundle-linear`, `%prove-arbitrary` | **shipped** |
 | 3c step 3 spike | subject-bundled-core encoding + `%prove-claim-in-stark` + blocker test | **shipped**, semantically correct, blocked upstream |
 | 3c step 3 completion | wallet drops Rust validator mirror | blocked on Vesl prover opcode extension |
-| Phase 7 | wallet live-tip freshness + anchor-mismatch (Path A `/proof` era) | **shipped 2026-04-24 pm**; **wallet flags superseded** by Path Y4 checkpoint model on this branch |
+| Phase 7 | wallet live-tip freshness + anchor-mismatch (legacy `GET /proof` era) | **shipped 2026-04-24 pm**; **wallet flags superseded** by checkpoint-based `light_verify` on this branch |
 | Phase 8 | upstream Vesl prover Nock 9/10/11 | pending upstream |
 | Path Y2 | `%scan-block` scanner hull, `GET /accumulator/:name`, `GET /status` | **shipped** (this tree) |
 | Path Y4 | `light_verify` = recursive verify + accumulator snapshot + headers to checkpoint | **shipped** — [`docs/wallet-verification.md`](docs/wallet-verification.md) |
@@ -145,8 +143,8 @@ In `hoon/app/app.hoon`:
   :_  state
   ~[[%claim-error 'name already registered']]
 ```
-That is rule **C3**.
-It checks the local kernel’s own `names` map. A different kernel on another machine has its own independent `names` map.
+That is rule **C3** (name uniqueness against local registry state).
+Any kernel without a shared input order can diverge.
 Without a canonical input order, two nodes can both accept conflicting claims.
 Example:
 ```mermaid
@@ -156,8 +154,8 @@ sequenceDiagram
     participant Chain as Nockchain
     participant NodeB as NNS node B
     participant Bob
-    Alice->>NodeA: POST /claim 0.nock -> Alice
-    Bob->>NodeB: POST /claim 0.nock -> Bob
+    Alice->>Chain: claim note 0.nock -> Alice
+    Bob->>Chain: claim note 0.nock -> Bob
     Note over NodeA: C3 passes: names map empty locally
     Note over NodeB: C3 passes: names map empty locally
     NodeA->>NodeA: %vesl-register hull=H(1) root=R_A
@@ -171,15 +169,15 @@ Each proof is locally truthful:
 - `R_A` really contains `0.nock -> Alice`.
 - `R_B` really contains `0.nock -> Bob`.
 The missing piece is not proof correctness. The missing piece is:
-> A canonical ordering of `%claim` inputs that every node observes and replays identically.
+> A canonical ordering of on-chain claim events that every follower applies identically (here via **`%scan-block`**).
 Bitcoin solves this with longest-chain transaction ordering. Ethereum solves it with block order. NNS uses Nockchain order.
-## 2.2 Chosen model: Path A
+## 2.2 Chosen model: Nockchain-ordered scan
 A claim is no longer authoritative because it hit one HTTP server.
 Instead:
 1. User sends a payment / claim note to Nockchain.
 2. Nockchain orders that note in a block.
 3. Every NNS follower observes the same ordered note stream.
-4. Every NNS kernel replays the same `%claim` inputs in the same order.
+4. Every NNS kernel folds the same candidates via **`%scan-block`** in the same order.
 5. Conflicts resolve deterministically by C3.
 Flow:
 ```mermaid
@@ -188,12 +186,10 @@ sequenceDiagram
     participant Hull as NNS hull
     participant Chain as Nockchain
     participant Kernel as NNS kernel
-    Client->>Hull: POST /claim 0.nock -> Alice
-    Hull->>Chain: submit tagged claim-note
-    Chain-->>Hull: confirmed in block N via follower
-    Hull->>Kernel: %claim name=0.nock owner=Alice
-    Kernel-->>Hull: %claimed or C3 error
-    Hull-->>Client: confirmed or rejected status
+    Client->>Chain: nns/v1/claim note (0.nock -> Alice)
+    Chain-->>Hull: block commitment + txs (follower)
+    Hull->>Kernel: %scan-block (candidates from block)
+    Kernel-->>Hull: effects / predicate rejection
 ```
 ## 2.3 Resulting system
 ```mermaid
@@ -203,27 +199,24 @@ flowchart LR
     Chain[Nockchain]
     Kernel[NNS kernel]
     Verifier[Any third party]
-    Client -->|"POST /claim"| Hull
-    Hull -->|"submit nns/v1/claim note"| Chain
-    Chain -->|"chain-ordered notes via follower"| Hull
-    Hull -->|"%claim replay"| Kernel
-    Kernel -->|"%vesl-settle periodic"| Hull
-    Hull -->|"post transition proof"| Chain
-    Client -->|"GET /proof?name=..."| Hull
-    Hull -->|"inclusion + transition STARK"| Verifier
-    Verifier -->|"verify vs chain headers"| Chain
+    Client -->|"submit claim note"| Chain
+    Chain -->|"blocks / txs"| Hull
+    Hull -->|"%scan-block"| Kernel
+    Client -->|"GET /accumulator"| Hull
+    Hull -->|"lookup bundle JSON"| Verifier
+    Verifier -->|"light_verify"| Verifier
 ```
 ## 2.4 Why this decision won
-Path A with the `nns-gate` upgrade gives:
-- Canonical ordering from Nockchain.
-- Deterministic NNS state transitions.
+Nockchain ordering plus an upgraded `nns-gate` / recursive proof story gives:
+- Canonical ordering from the chain.
+- Deterministic accumulator transitions in the kernel.
 - No new validator set.
-- Stateless wallet verification.
-- No trust in the queried NNS server.
-- A natural zkRollup architecture.
+- Offline wallet verification (`light_verify`) against a pinned checkpoint.
+- No need to trust indexer JSON without cryptographic checks.
+- A natural zkRollup-style evolution path.
 Important design point:
-> Path A alone gives canonical ordering.  
-> Path A + upgraded `nns-gate` gives stateless light-client verification.
+> Chain ordering alone fixes conflicting first claims.  
+> Strong gates + recursive proofs move verification into the client.
 ---
 # 3. What Vesl provides, and what it does not
 Vesl is a verification SDK / STARK stack. It is not a consensus protocol.
@@ -278,13 +271,13 @@ So “verify” splits into:
    Works, but bad wallet UX.
 3. **A third party verifies NNS state without replaying everything.**  
    Requires STARK proofs. This is Vesl’s role.
-## 3.5 Vesl’s role in Path A
+## 3.5 Vesl’s role in the NNS stack
 | System shape | Vesl proves | Problem |
 |---|---|---|
 | Centralized kernel today | Rows are in a root | Root may not be canonical |
-| Path A without Vesl | Chain-ordered replay is canonical | Wallet must replay or trust server |
-| Path A with current G1/G2 gate | Rows are in committed root | Wallet still trusts server applied log honestly |
-| Path A with upgraded gate | Chain-ordered claims folded into root correctly | Desired zkRollup model |
+| NNS without Vesl | Chain-ordered replay is canonical | Wallet must replay or trust server |
+| NNS with current G1/G2 gate | Rows are in committed root | Wallet still trusts server applied log honestly |
+| NNS with upgraded gate | Chain-ordered claims folded into root correctly | Desired zkRollup model |
 ---
 # 4. Solution space considered
 ## 4.1 A. Nockchain as sequencer
@@ -297,10 +290,10 @@ Mechanism:
   - fee/payment reference
 - Every node runs a `ChainFollower`.
 - Follower scans Nockchain in canonical block order.
-- Follower pokes `%claim` into the local kernel in that order.
-- HTTP `POST /claim` becomes a convenience around constructing and submitting the note.
+- Follower pokes **`%scan-block`** into the local kernel in that order.
+- Users submit claim notes on-chain (no HTTP claim endpoint on this hull).
 Properties:
-| Axis | Path A |
+| Axis | A (chain-ordered scan) |
 |---|---|
 | Finality | 1 block, plus chosen finality depth |
 | Cost per claim | chain gas + fee, usually same tx |
@@ -325,7 +318,7 @@ Properties:
 |---|---|
 | Finality | at least 2 blocks |
 | Cost | 2 chain transactions |
-| Complexity | Path A + timeout/reveal protocol |
+| Complexity | model A + timeout/reveal protocol |
 | Trust | Nockchain |
 | Main benefit | mempool front-running protection |
 Decision:
@@ -348,7 +341,7 @@ Properties:
 Decision:
 - Rejected for now.
 - Reconsider only if:
-  - Path A latency is unacceptable,
+  - model A latency is unacceptable,
   - per-claim gas is prohibitive,
   - and a credible operator set exists.
 ## 4.4 D. Rollup with sequencer + fraud proofs
@@ -365,7 +358,7 @@ Properties:
 | Trust | one honest challenger + data availability |
 | Failure modes | censorship, DA failure, mass challenges |
 Decision:
-- Rejected in favor of zk variant of Path A.
+- Rejected in favor of zk variant of model A.
 - STARK finality is better for name-registry UX than fraud windows.
 ## 4.5 Comparison table
 | Axis | A | B | C | D |
@@ -481,7 +474,7 @@ The wallet does not trust the NNS server. It verifies that the proof attests to 
 ### Part 2: verify chain linkage (Path Y4 — pinned checkpoint)
 The wallet does **not** call a live Nockchain RPC during `light_verify`. It checks that **`headers_to_checkpoint`** links **`last_proved_digest`** at **`last_proved_height`** back to a **pinned** `(checkpoint_height, checkpoint_digest)` supplied out-of-band (CLI flags or embedded config).
 
-**Historical (Phase 3c / Phase 7 Path A wallet):** the STARK + bundle could instead be checked against a **live** tip (`ProofAnchor`, `--chain-tip`, `--max-staleness`). That model is superseded by Path Y4 on this branch for the standalone verifier.
+**Historical (Phase 3c / Phase 7 live-tip wallet):** the STARK + bundle could instead be checked against a **live** tip (`ProofAnchor`, `--chain-tip`, `--max-staleness`). That model is superseded on this branch by **`light_verify`** with a pinned checkpoint.
 
 ## 5.6 Trust boundary
 **Path Y4 (`light_verify`):**
@@ -513,7 +506,7 @@ The wallet does **not** call a live Nockchain RPC during `light_verify`. It chec
 
 The server is not trusted for chain **truth** at verify time: the wallet pins a checkpoint and checks linkage locally.
 
-## 5.7 Why NNS does not store headers (Path A anchor kernel)
+## 5.7 Why NNS does not store headers (kernel anchor model)
 **Historical:** the slim-anchor refactor removed the old 1,024-header deque.
 Kernel anchor state was:
 ```text
@@ -530,7 +523,7 @@ Intermediate headers were validated on `%advance-tip` and then discarded.
 | Chain linkage in **wallet** | `headers_to_checkpoint` in Y4 bundle | no (client-supplied) |
 | Block PoW / page body inside recursive STARK | proof statement (Y3) | proven, not stored |
 
-**Path A era:** `tip-digest + tip-height`, `header_chain` inside a claim bundle, etc. — see earlier sections.
+**Earlier wallet drafts:** `tip-digest + tip-height`, `header_chain` inside a claim bundle, etc. — see earlier sections.
 
 ## 5.9 What the follower does (Path Y)
 The hull **`ChainFollower`** advances the kernel **one block at a time** (subject to `finality_depth` / batch limits in `chain_follower.rs`):
@@ -565,7 +558,7 @@ Approximate future verification bundle for `alice.nock`:
 ## 6.0 Path Y4 — current `light_verify` contract
 See [§1.2](#12-path-y4-wallet-verification-this-branch) and [`docs/wallet-verification.md`](docs/wallet-verification.md). Summary: **recursive STARK verify** → **accumulator snapshot verify** (when `value` is present) → **header chain to pinned checkpoint**; **no** live Nockchain query.
 
-## 6.1 Historical — Phase 3c option-B proof (Path A kernel)
+## 6.1 Historical — Phase 3c option-B proof (superseded packaging)
 Proof scaffolding had two pieces:
 1. `validate-claim-bundle`
 2. `%prove-claim`
@@ -636,7 +629,7 @@ The wallet SDK can drop the Rust validator mirror.
 Current blocker: Vesl prover opcode support.
 ---
 # 7. Staleness and fork resistance
-This section mixes **Path A** operational story (HTTP claim queue, `%claim` replay, Phase 7 live-tip freshness) with the **Path Y4** answer. Path Y4 wallets pin a **checkpoint** and verify **headers + proof + snapshot** offline — see [§1.3](#13-phase-7-live-chain-tip-freshness-superseded-for-path-y4-wallets).
+This section contrasts older operational stories (HTTP claim queues, live-tip freshness) with the **`light_verify`** answer: wallets pin a **checkpoint** and verify **headers + proof + snapshot** offline — see [§1.3](#13-phase-7-live-chain-tip-freshness-superseded-for-path-y4-wallets).
 
 ## 7.1 The attack
 Suppose:
@@ -653,17 +646,17 @@ Naive wallet checks would pass:
 - Anchor exists somewhere in Nockchain history.
 But Alice should not get ownership if Bob was first on-chain.
 ## 7.2 Layer 1: chain-ordered replay
-**Path A:** `POST /claim` was not a commitment; the follower replayed `%claim` in chain order `(block_height, tx_index_in_block)`.
+**Legacy HTTP hull:** `POST /claim` was not a chain commitment; ordering came from follower replay `(block_height, tx_index_in_block)`.
 
 **Path Y:** there is no claim HTTP path. Ordering is whatever Nockchain mined; the scanner applies **`%scan-block`** in height order. Honest nodes converge if they observe the same chain prefix.
 
 ## 7.3 Layer 2: frozen followers (liveness)
-**Path A:** stuck follower → frozen `names` / pending queue; proofs should not be issued for new views.
+**Legacy mirror hull:** stuck follower → stale registry mirror; clients must not trust proofs ahead of the follower.
 
 **Path Y:** stuck follower → **`last-proved-height`** stops advancing; **`GET /accumulator`** reflects the stale prefix. The wallet detects “too far behind” only indirectly unless operators monitor **`/status.follower`**.
 
 ## 7.4 Layer 3: wallet policy — Phase 7 vs Path Y4
-**Phase 7 (Path A `/proof` wallet):** compare proof anchor to a **live** chain tip and reject if `proof.t_nns_height < tip - MAX_STALENESS` (default 20 blocks; tune to `finality_depth + margin`).
+**Phase 7 (`GET /proof` wallet):** compare proof anchor to a **live** chain tip and reject if `proof.t_nns_height < tip - MAX_STALENESS` (default 20 blocks; tune to `finality_depth + margin`).
 
 **Path Y4:** no live RPC in `light_verify`. The wallet **pins** a checkpoint digest/height and verifies the **header chain** + **STARK** + **accumulator snapshot**. A malicious server cannot silently substitute a fork unless the user also accepts a bad checkpoint or a forged header chain / proof.
 ## 7.5 Scenario walk-through
@@ -701,14 +694,14 @@ Wallet at current_tip 1025 checks:
 1000 < 1025 - 20 = 1005
 Reject stale proof.
 ```
-## 7.6 Phase 7 acceptance criteria — **shipped on Path A branch; wallet path superseded**
+## 7.6 Phase 7 acceptance criteria — **wallet path superseded**
 Phase 7 landed for the **`GET /proof` + `ClaimBundle`** world (2026-04-24 pm): anchor fields on proof responses, `%anchor-mismatch`, `light_verify --chain-tip` / `--max-staleness`, two-server integration tests, etc.
 
 **On this Path Y branch**, **`light_verify` no longer implements that contract** — use **Path Y4** ([§1.2](#12-path-y4-wallet-verification-this-branch), [`docs/wallet-verification.md`](docs/wallet-verification.md)). Some **Rust types** (`ProofAnchor`, `freshness` helpers) or **tests** may remain for compatibility or library coverage; they are not the Y4 verifier surface.
 
 | Criterion (Phase 7 era) | Notes |
 |---|---|
-| `ProofAnchor` on proof bundles | Path A `/proof`; not emitted by Path Y `GET /accumulator` |
+| `ProofAnchor` on proof bundles | legacy `GET /proof`; not emitted by `GET /accumulator` |
 | `light_verify` freshness CLI | **Removed** from Y4 binary; checkpoint + headers instead |
 | Freshness unit / two-server tests | May still run against `freshness` module; not Y4 primary story |
 | `docs/wallet-verification.md` | **Done** for Path Y4 |
@@ -940,25 +933,24 @@ Hardware:
 - macOS.
 - Release build.
 - `NockStackSize::Large`.
-Batch:
-- one claim for `alpha.nock`.
-- Kernel folds JAM’d batch into Goldilocks belt digest.
-- Proves 64 nested Nock-4 increments over it.
-Measured:
+Baseline (Path Y, `tests/prover.rs::phase0_baseline_prove_and_verify`):
+- `%prove-arbitrary` with a small fixed `[subject formula]` (three Nock-4
+  increments on `42` — see `baseline_prove_arbitrary_jams`).
+- Emits `%arbitrary-proof` (baseline `%prove-arbitrary`, not removed batch-settlement causes).
+Measured (Apple Silicon, **release** build, one sample; refresh with the
+command above):
 | Metric | Value |
 |---|---:|
-| `%prove-batch` wall-clock | 4.758 s |
-| cargo process wall-clock | 81 s |
-| proof JAM bytes | 76,488 B |
-| peak RSS | 1.157 GB |
-| peak memory footprint | 162 MB |
-| retired instructions | 5.23 × 10⁹ |
-| voluntary context switches | 6,169 |
-| effects | `%batch-settled`, `%batch-proof`, `%vesl-settled` |
+| `%prove-arbitrary` wall-clock | 11.906s |
+| cargo process wall-clock | 3.15 s |
+| product JAM bytes | 2 B |
+| proof JAM bytes | 58,127 B |
+| effects | `%arbitrary-proof` (1) |
+| peak RSS / instructions / context switches | (not re-profiled for this baseline) |
 Surprise:
 - Much better than Vesl forge’s 600-second / 128 GB reference.
 - Reasons:
-  - NNS baseline batch is tiny.
+  - NNS baseline trace is tiny (few table rows vs a full registry batch).
   - Apple Silicon hits prover jets well.
 Expected x86 Linux slowdown:
 ```text
@@ -981,7 +973,7 @@ Built:
 Measurements:
 | Metric | Value |
 |---|---:|
-| `%prove-batch` | 4.720 s |
+| `%prove-arbitrary` (baseline; older docs used `%prove-batch`) | 4.720 s |
 | proof JAM | 76,879 B |
 | peak RSS | 1.116 GB |
 | `%verify-stark` | 0.605 s |
@@ -1515,7 +1507,7 @@ The blocker-signal test in `tests/prover.rs` is the only NNS-side code that need
 ## 11.1 Phase 0: baseline STARK prover
 Status: **shipped**.
 Implemented:
-- `%prove-batch`
+- `%prove-arbitrary` baseline (supersedes removed `%prove-batch` era)
 - Real Vesl-style proof generation.
 - End-to-end prove/verify test.
 Metrics:
@@ -1721,14 +1713,14 @@ Status: **superseded / partially historical** relative to Path Y.
 
 **Path Y shipped:** standalone **`light_verify`** + [`docs/wallet-verification.md`](docs/wallet-verification.md) for **Path Y4** (recursive proof + accumulator snapshot + checkpoint headers; no live chain RPC).
 
-**Path A era:** expand **`GET /proof`** payload, `ClaimBundle` freshness, transition-proof metadata — see Phase 3c / Phase 7 sections.
+**Earlier APIs:** expand **`GET /proof`** payload, `ClaimBundle` freshness, transition-proof metadata — see Phase 3c / Phase 7 sections.
 
 Still pending for **full recursive** trustlessness:
 - Y3: real recursive step proof bytes wired end-to-end (blocked [§1.4](#14-current-upstream-blocker)).
 - Optional: richer public outputs than bundle-digest-only binding.
 
-## 11.10 Phase 7: staleness / fork resistance (Path A wallet)
-Status: **shipped 2026-04-24 pm** on the Path A hull; **wallet flags superseded** by Path Y4 ([§1.3](#13-phase-7-live-chain-tip-freshness-superseded-for-path-y4-wallets), [§7.6](#76-phase-7-acceptance-criteria--shipped-on-path-a-branch-wallet-path-superseded)).
+## 11.10 Phase 7: staleness / fork resistance (legacy live-tip wallet)
+Status: **shipped 2026-04-24 pm**; **wallet flags superseded** by checkpoint-based `light_verify` ([§1.3](#13-phase-7-live-chain-tip-freshness-superseded-for-path-y4-wallets), [§7.6](#76-phase-7-acceptance-criteria--wallet-path-superseded)).
 
 Historical summary of what landed for **`GET /proof` + `light_verify` freshness**:
 - Hoon: `+$claim-bundle` + `+$claim-bundle-linear` each gain `anchored-tip-height=@ud`; `+matches-current-anchor` predicate; `%anchor-mismatch` validation error.
@@ -1787,10 +1779,10 @@ After upstream merge:
 ## 12.3 Wallet / SDK todos
 - **Path Y4 shipped:** `light_verify` + [`docs/wallet-verification.md`](docs/wallet-verification.md) (checkpoint, headers, `%verify-stark-explicit`, `%verify-accumulator-snapshot`).
 - **Optional hardening:** embed default `CheckpointConfig` in release binaries; CI with rebuilt `out.jam` for wallet-export round-trip tests.
-- **Path A / Phase 3c parity (if revived):** inclusion + transition + live-anchor + freshness flow remains documented historically.
+- **Phase 3c parity (if revived):** inclusion + transition + live-anchor + freshness flow remains documented historically.
 ## 12.4 Operator todos
 - **`/status.follower`**: lag vs chain tip, last error phase, advance telemetry (**shipped** on Path Y — extend as needed).
-- **Path A only:** `/status` old `Submitted` claims breakdown (not applicable once claim queue is gone).
+- **Indexer-only:** `/status` old `Submitted` claims breakdown (not applicable once claim queue is gone).
 - **Prometheus** `/metrics` export (still optional).
 ---
 # 13. Known risks and edge cases
@@ -1888,7 +1880,7 @@ Specific asks:
 Downstream effect:
 - NNS blocker test becomes green end-to-end validator-in-STARK test.
 - Wallet SDK drops ~150-line Rust validator mirror.
-Final **Path A / Phase 3c-era** production rule until upstream lands (validator-in-STARK):
+Final **Phase 3c-era** production rule until upstream lands (validator-in-STARK):
 ```text
 Use Phase 3c step 2:
   STARK verify

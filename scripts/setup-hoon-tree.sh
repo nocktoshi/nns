@@ -11,9 +11,9 @@
 #   - /jams/                      constraint jam artifacts
 #
 # Vesl (`$VESL_HOME`) provides:
-#   - /lib/vesl-graft.hoon        settlement graft used by %settle-batch
-#   - /lib/vesl-merkle.hoon       Merkle helpers used by %claim
-#   - /lib/vesl-prover.hoon       STARK prover for arbitrary Nock (%prove-batch)
+#   - /lib/vesl-graft.hoon        settlement graft (embedded in kernel state)
+#   - /lib/vesl-merkle.hoon       Merkle helpers for predicates / proofs
+#   - /lib/vesl-prover.hoon       STARK prover (`prove-computation`; Path Y `%prove-arbitrary`, etc.)
 #   - /lib/vesl-stark-verifier.hoon   Level-2 STARK verifier (%verify-stark)
 #   - /lib/vesl-verifier.hoon     softed-constraints wrapper over the above
 #

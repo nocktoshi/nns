@@ -1,6 +1,6 @@
 //! HTTP API.
 //!
-//! Path Y makes NNS a read-only scanner/indexer. Users submit tagged
+//! NNS is a read-only chain scanner/indexer. Users submit tagged
 //! `nns/v1/claim` transactions directly to Nockchain; this service follows
 //! finalized blocks and serves accumulator state.
 //!
