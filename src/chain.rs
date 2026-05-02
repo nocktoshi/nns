@@ -208,6 +208,32 @@ pub fn hash_to_atom_bytes(h: &Hash) -> Vec<u8> {
     out
 }
 
+/// Compare two serializations of the same Tip5 `@ux` digest.
+///
+/// [`crate::kernel::decode_scan_state`] uses `atom.as_ne_bytes()` (minimal
+/// width), so genesis `0` is often `[]` or a single `0` byte, while
+/// gRPC [`hash_to_atom_bytes`] always returns 40 bytes (5×u64 LE). Those
+/// must still compare equal for [`validate_scan_block_chain`].
+pub fn tip5_atom_semantic_eq(a: &[u8], b: &[u8]) -> bool {
+    fn five_limbs(s: &[u8]) -> [u64; 5] {
+        let mut padded = [0u8; 40];
+        let n = s.len().min(40);
+        if n > 0 {
+            padded[..n].copy_from_slice(&s[..n]);
+        }
+        let mut out = [0u64; 5];
+        for i in 0..5 {
+            out[i] = u64::from_le_bytes(
+                padded[i * 8..(i + 1) * 8]
+                    .try_into()
+                    .expect("40-byte chunk"),
+            );
+        }
+        out
+    }
+    five_limbs(a) == five_limbs(b)
+}
+
 /// Build a `common.v1.Hash` from 40 bytes of LE packed felts. Returns
 /// `None` if the slice is not exactly 40 bytes.
 pub fn atom_bytes_to_hash(bytes: &[u8]) -> Option<Hash> {
@@ -697,7 +723,7 @@ pub const SCAN_BLOCK_PREFETCH_CONCURRENCY: usize = 32;
 pub fn validate_scan_block_chain(expected_parent: &[u8], blocks: &[ScanBlockFetch]) -> Result<(), String> {
     let mut exp = expected_parent.to_vec();
     for b in blocks {
-        if b.parent.as_slice() != exp.as_slice() {
+        if !tip5_atom_semantic_eq(b.parent.as_slice(), exp.as_slice()) {
             return Err(format!(
                 "prefetched scan batch parent mismatch at height {} (RPC skew or fork)",
                 b.height
@@ -873,6 +899,38 @@ pub async fn plan_anchor_advance(
             current_chain_tip: tip,
         }),
     })
+}
+
+#[cfg(test)]
+mod tip5_semantic_eq_tests {
+    use super::{tip5_atom_semantic_eq, validate_scan_block_chain, ScanBlockFetch};
+
+    #[test]
+    fn zero_digest_empty_matches_rpc_forty_zeros() {
+        assert!(tip5_atom_semantic_eq(&[], &[0u8; 40]));
+        assert!(tip5_atom_semantic_eq(&[0u8], &[0u8; 40]));
+        assert!(tip5_atom_semantic_eq(&[0u8; 40], &[0u8; 40]));
+    }
+
+    #[test]
+    fn nonzero_requires_full_agreement() {
+        let mut a = [0u8; 40];
+        a[0] = 7;
+        assert!(!tip5_atom_semantic_eq(&[], &a));
+        assert!(tip5_atom_semantic_eq(&a, &a));
+    }
+
+    #[test]
+    fn validate_chain_boot_digest_first_block_matches_rpc_genesis_parent() {
+        let b = ScanBlockFetch {
+            height: 1,
+            page_digest: vec![9u8; 40],
+            parent: vec![0u8; 40],
+            page_tx_ids: vec![],
+            tx_details: vec![],
+        };
+        validate_scan_block_chain(&[], &[b]).expect("kernel peek [] vs RPC genesis parent");
+    }
 }
 
 #[cfg(test)]
