@@ -1,8 +1,9 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::claim_note::ClaimNoteV1;
-use crate::kernel::AnchorHeader;
+use crate::kernel::{AnchorHeader, ClaimCandidate};
 use nockapp_grpc::pb::common::v1::PageRequest;
 use nockapp_grpc::pb::common::v1::{Base58Hash, Belt, Hash};
 use nockapp_grpc::pb::public::v2::nockchain_block_service_client::NockchainBlockServiceClient;
@@ -13,7 +14,8 @@ use nockapp_grpc::pb::public::v2::{
     GetTransactionDetailsRequest, TransactionDetails,
 };
 use nockchain_client_rs::{ChainClient, ChainConfig};
-use nockchain_types::tx_engine::common::Hash as DomainHash;
+use nockchain_math::zoon::zset::ZSet;
+use nockchain_types::tx_engine::common::Hash as Tip5Hash;
 use tokio::sync::Semaphore;
 
 /// Best-effort chain acceptance check for a base58 tx id.
@@ -230,7 +232,7 @@ pub fn atom_bytes_to_hash(bytes: &[u8]) -> Option<Hash> {
 /// Decode a Nockchain base58 Tip5 hash into the 40-byte LE-packed atom
 /// representation used by the Hoon kernel.
 pub fn base58_hash_to_atom_bytes(value: &str) -> Result<Vec<u8>, String> {
-    let hash = DomainHash::from_base58(value)
+    let hash = Tip5Hash::from_base58(value)
         .map_err(|e| format!("invalid base58 Tip5 hash {value:?}: {e}"))?;
     let mut out = Vec::with_capacity(40);
     for limb in hash.to_array() {
@@ -246,6 +248,140 @@ pub fn tx_ids_from_block_details(details: &BlockDetails) -> Result<Vec<Vec<u8>>,
         .iter()
         .map(|h| base58_hash_to_atom_bytes(&h.hash))
         .collect()
+}
+
+/// Decode a 40-byte LE limb-packed tx-id atom (kernel / gRPC shape) into a Tip5 [`Tip5Hash`].
+pub fn tx_atom_bytes_to_tip5_hash(bytes: &[u8]) -> Result<Tip5Hash, String> {
+    if bytes.len() != 40 {
+        return Err(format!(
+            "tx-id atom must be 40 bytes (5×u64 LE), got {}",
+            bytes.len()
+        ));
+    }
+    let mut limbs = [0u64; 5];
+    for i in 0..5 {
+        let chunk: [u8; 8] = bytes[i * 8..(i + 1) * 8]
+            .try_into()
+            .map_err(|_| "internal: tx-id slice chunk".to_string())?;
+        limbs[i] = u64::from_le_bytes(chunk);
+    }
+    Ok(Tip5Hash::from_limbs(&limbs))
+}
+
+/// Encode [`Tip5Hash`] as the 40-byte LE atom bytes used in `%scan-block` `page-tx-ids`.
+pub fn tip5_hash_to_tx_atom_bytes(h: &Tip5Hash) -> Vec<u8> {
+    let limbs = h.to_array();
+    let mut out = Vec::with_capacity(40);
+    for l in limbs {
+        out.extend_from_slice(&l.to_le_bytes());
+    }
+    out
+}
+
+/// Deterministic tx-id order matching Hoon `~(tap z-in tx-ids)` on the canonical z-set:
+/// insert each `@ux` tx-id into a [`ZSet`], then [`ZSet::into_items`] (same `gor-tip` /
+/// `dor-tip` structure as `/common/zoon`).
+///
+/// RPC lists may be arbitrary; Nockchain block nouns store tx-ids as `(z-set @ux)`.
+///
+/// If **any** entry is not exactly **40 bytes** (legacy tests using 1-byte stub atoms),
+/// returns the input **unchanged** so harnesses keep deterministic insertion order.
+pub fn canonical_z_set_tx_order(page_tx_ids: Vec<Vec<u8>>) -> Result<Vec<Vec<u8>>, String> {
+    if page_tx_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    if page_tx_ids.iter().any(|id| id.len() != 40) {
+        return Ok(page_tx_ids);
+    }
+    let mut seen = std::collections::HashSet::<Vec<u8>>::new();
+    for id in &page_tx_ids {
+        if !seen.insert(id.clone()) {
+            return Err(format!(
+                "duplicate tx-id in block page_tx_ids list ({} bytes)",
+                id.len()
+            ));
+        }
+    }
+    let hashes: Vec<Tip5Hash> = page_tx_ids
+        .iter()
+        .map(|b| tx_atom_bytes_to_tip5_hash(b))
+        .collect::<Result<Vec<_>, _>>()?;
+    let set = ZSet::try_from_items(hashes).map_err(|e| format!("z-set tx-id build failed: {e}"))?;
+    Ok(set
+        .into_items()
+        .into_iter()
+        .map(|h| tip5_hash_to_tx_atom_bytes(&h))
+        .collect())
+}
+
+/// Reorder [`TransactionDetails`] to match `canonical_tx_atoms` order from [`canonical_z_set_tx_order`].
+pub fn align_transaction_details_with_canonical_order(
+    canonical_tx_atoms: &[Vec<u8>],
+    tx_details: Vec<TransactionDetails>,
+) -> Result<Vec<TransactionDetails>, String> {
+    let mut by_id: HashMap<Vec<u8>, TransactionDetails> = HashMap::with_capacity(tx_details.len());
+    for d in tx_details {
+        let atom = base58_hash_to_atom_bytes(&d.tx_id)?;
+        by_id.insert(atom, d);
+    }
+    let mut ordered = Vec::with_capacity(canonical_tx_atoms.len());
+    for id in canonical_tx_atoms {
+        let d = by_id.remove(id).ok_or_else(|| {
+            format!(
+                "missing TransactionDetails for tx atom {} (align with block tx_ids)",
+                hex_prefix(id, 8)
+            )
+        })?;
+        ordered.push(d);
+    }
+    if !by_id.is_empty() {
+        return Err(format!(
+            "extra TransactionDetails not listed in page_tx_ids ({} stray)",
+            by_id.len()
+        ));
+    }
+    Ok(ordered)
+}
+
+fn hex_prefix(bytes: &[u8], n: usize) -> String {
+    let show = n.min(bytes.len());
+    let hex: String = bytes[..show].iter().map(|b| format!("{b:02x}")).collect();
+    if bytes.len() > show {
+        format!("{hex}…")
+    } else {
+        hex
+    }
+}
+
+/// Apply canonical z-set ordering to RPC-fetched block inputs before `%scan-block`.
+pub fn align_scan_block_fetch_tx_order(
+    page_tx_ids: Vec<Vec<u8>>,
+    tx_details: Vec<TransactionDetails>,
+) -> Result<(Vec<Vec<u8>>, Vec<TransactionDetails>), String> {
+    let canonical_ids = canonical_z_set_tx_order(page_tx_ids)?;
+    let details = align_transaction_details_with_canonical_order(&canonical_ids, tx_details)?;
+    Ok((canonical_ids, details))
+}
+
+/// Stable scan order for [`crate::kernel::ClaimCandidate`] rows: sort by z-set position of
+/// `witness.tx_id` in the block's tx-id multiset (matches `+claim-scanner` fold order).
+pub fn sort_claim_candidates_by_z_set_tx_order(
+    page_tx_ids: &[Vec<u8>],
+    mut candidates: Vec<ClaimCandidate>,
+) -> Result<Vec<ClaimCandidate>, String> {
+    let canonical = canonical_z_set_tx_order(page_tx_ids.to_vec())?;
+    let rank: HashMap<Vec<u8>, usize> = canonical
+        .into_iter()
+        .enumerate()
+        .map(|(i, k)| (k, i))
+        .collect();
+    candidates.sort_by_key(|c| {
+        rank
+            .get(&c.witness.tx_id)
+            .copied()
+            .unwrap_or(usize::MAX)
+    });
+    Ok(candidates)
 }
 
 /// Connect a `NockchainBlockServiceClient` against `endpoint`.
@@ -496,6 +632,7 @@ pub async fn fetch_scan_block_inputs(endpoint: &str, height: u64) -> Result<Scan
     let parent = hash_to_atom_bytes(parent_atom);
     let page_tx_ids = tx_ids_from_block_details(&details)?;
     let tx_details = fetch_block_transaction_details(endpoint, &details).await?;
+    let (page_tx_ids, tx_details) = align_scan_block_fetch_tx_order(page_tx_ids, tx_details)?;
     Ok(ScanBlockFetch {
         height: dh,
         page_digest,
@@ -736,4 +873,69 @@ pub async fn plan_anchor_advance(
             current_chain_tip: tip,
         }),
     })
+}
+
+#[cfg(test)]
+mod z_set_order_tests {
+    use super::*;
+    use crate::kernel::{ClaimCandidate, ClaimWitness};
+
+    fn atom_from_limbs(l: [u64; 5]) -> Vec<u8> {
+        let h = Tip5Hash::from_limbs(&l);
+        tip5_hash_to_tx_atom_bytes(&h)
+    }
+
+    #[test]
+    fn canonical_z_set_order_idempotent() {
+        let a = atom_from_limbs([3, 0, 0, 0, 0]);
+        let b = atom_from_limbs([9, 0, 0, 0, 0]);
+        let once = canonical_z_set_tx_order(vec![b.clone(), a.clone()]).unwrap();
+        let twice = canonical_z_set_tx_order(once.clone()).unwrap();
+        assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn non_40_byte_stub_preserves_input_order() {
+        let v = vec![vec![0x07], vec![0x08]];
+        let out = canonical_z_set_tx_order(v.clone()).unwrap();
+        assert_eq!(out, v);
+    }
+
+    #[test]
+    fn sort_claim_candidates_follows_z_set_rank() {
+        let a = atom_from_limbs([1, 0, 0, 0, 0]);
+        let b = atom_from_limbs([4, 0, 0, 0, 0]);
+        let page = vec![b.clone(), a.clone()];
+        let canon = canonical_z_set_tx_order(page.clone()).unwrap();
+        assert_eq!(canon.len(), 2);
+
+        let c_a = ClaimCandidate {
+            name: "z.NOCK".to_string(),
+            owner: "alice".to_string(),
+            fee: 0,
+            tx_hash: a.clone(),
+            witness: ClaimWitness {
+                tx_id: a,
+                spender_pkh: vec![],
+                treasury_amount: 0,
+                output_lock_root: String::new(),
+            },
+        };
+        let c_b = ClaimCandidate {
+            name: "z.NOCK".to_string(),
+            owner: "bob".to_string(),
+            fee: 0,
+            tx_hash: b.clone(),
+            witness: ClaimWitness {
+                tx_id: b,
+                spender_pkh: vec![],
+                treasury_amount: 0,
+                output_lock_root: String::new(),
+            },
+        };
+        // Deliberately reverse of desired scan order
+        let sorted = sort_claim_candidates_by_z_set_tx_order(&page, vec![c_b, c_a]).unwrap();
+        assert_eq!(sorted[0].witness.tx_id, canon[0]);
+        assert_eq!(sorted[1].witness.tx_id, canon[1]);
+    }
 }

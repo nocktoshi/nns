@@ -7,7 +7,8 @@ use nockchain_client_rs::{NoteData, NoteDataEntry};
 use tokio::task::JoinHandle;
 
 use crate::chain::{
-    base58_hash_to_atom_bytes, fetch_current_tip_height, prefetch_scan_blocks_for_heights,
+    base58_hash_to_atom_bytes, canonical_z_set_tx_order, fetch_current_tip_height,
+    prefetch_scan_blocks_for_heights, sort_claim_candidates_by_z_set_tx_order,
     validate_scan_block_chain,
 };
 use crate::claim_note::ClaimNoteV1;
@@ -370,11 +371,17 @@ async fn apply_prefetched_scan_blocks_inner(
     let mut last_done = None;
 
     for (idx, block) in prefetched.iter().enumerate() {
+        let page_tx_for_poke = canonical_z_set_tx_order(block.page_tx_ids.clone())
+            .map_err(|e| format!("canonical tx-id order: {e}"))?;
+
         let candidates = if let Some(ref inj) = injected_candidates {
-            inj
-                .get(idx)
-                .cloned()
-                .ok_or_else(|| format!("injected candidates missing for block index {idx}"))?
+            sort_claim_candidates_by_z_set_tx_order(
+                &page_tx_for_poke,
+                inj.get(idx)
+                    .cloned()
+                    .ok_or_else(|| format!("injected candidates missing for block index {idx}"))?,
+            )
+            .map_err(|e| format!("sort injected scan candidates: {e}"))?
         } else {
             extract_claim_candidates(&block.tx_details)?
         };
@@ -388,8 +395,8 @@ async fn apply_prefetched_scan_blocks_inner(
                 height = block.height,
                 parent = %atom_hex_preview(&block.parent, 16),
                 page_digest = %atom_hex_preview(&block.page_digest, 16),
-                page_tx_count = block.page_tx_ids.len(),
-                page_tx_ids_preview = %format_tx_id_previews(&block.page_tx_ids, 8),
+                page_tx_count = page_tx_for_poke.len(),
+                page_tx_ids_preview = %format_tx_id_previews(&page_tx_for_poke, 8),
                 claim_candidates_count = candidates.len(),
                 claim_candidates = %format_candidates_for_log(&candidates),
                 "chain_follower: %scan-block poke payload (Tip5 atoms are LE 40B; compare with kernel last_proved_digest)"
@@ -412,7 +419,7 @@ async fn apply_prefetched_scan_blocks_inner(
                     &block.parent,
                     block.height,
                     &block.page_digest,
-                    &block.page_tx_ids,
+                    &page_tx_for_poke,
                     &candidates,
                 ),
             )
@@ -495,6 +502,10 @@ async fn apply_prefetched_scan_blocks_inner(
 }
 
 /// Extract NNS claim candidates from one prefetched block (for tests / tooling).
+///
+/// **`ScanBlockFetch` from [`crate::chain::fetch_scan_block_inputs`]** already has
+/// tx rows in z-set canonical order. For hand-built stubs, call
+/// [`crate::chain::sort_claim_candidates_by_z_set_tx_order`] if needed.
 pub fn claim_candidates_from_fetch(block: &crate::chain::ScanBlockFetch) -> Result<Vec<crate::kernel::ClaimCandidate>, String> {
     extract_claim_candidates(&block.tx_details)
 }
