@@ -848,12 +848,11 @@
 ::        the block's height; stored in each new entry's `claim-height`.
 ::    candidates
 ::        Rust-provided list of parsed `nns/v1/claim` transactions
-::        from this block. Order preserves on-chain tx order; since
-::        `insert` is first-writer-wins, the scanner's output depends
-::        on this ordering when two candidates in the same block
-::        claim the same name. Nockchain's block production already
-::        gives us a stable total order over tx-ids, so the follower
-::        emits candidates in `page.tx-ids` order.
+::        from this block. Order must match `~(tap z-in tx-ids)` on the
+::        block's canonical `(z-set @ux)` — Tip5 / gor-tip visit order
+::        (`src/chain.rs::canonical_z_set_tx_order`). Since `insert` is
+::        first-writer-wins, duplicate-name races resolve by that scan
+::        order (the follower sorts RPC-derived lists to match).
 ::
 ::  Complexity: O(k log n) where k = |candidates|, n = |old-acc|.
 ::  The recursive-step STARK (Y3) will trace this arm directly —

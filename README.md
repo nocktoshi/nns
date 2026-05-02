@@ -21,7 +21,9 @@ cargo +nightly install --git https://github.com/nockchain/nockchain.git hoonc
 git clone https://github.com/nockchain/nockchain ~/nockchain
 
 # vesl sibling clone (sourced via $VESL_HOME, default ../vesl)
-git clone https://github.com/zkvesl/vesl.git ~/vesl
+git clone https://github.com/zkvesl/vesl-core.git ~/vesl-core
+cd ~/vesl-core
+git checkout dev
 ```
 
 `scripts/setup-hoon-tree.sh` (invoked by `make install`) symlinks the

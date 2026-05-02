@@ -20,6 +20,7 @@ install-rust: install-bin-lib install-wrappers
 kernel-jam:
 	bash scripts/setup-hoon-tree.sh
 	hoonc --new hoon/app/app.hoon hoon/
+	install -d "$(DESTDIR)$(LIBDIR)"
 	install -m 644 "out.jam" "$(DESTDIR)$(KERNEL)"
 
 install-bin-lib:
