@@ -365,7 +365,11 @@ async fn apply_prefetched_scan_blocks_inner(
         }
     };
 
-    validate_scan_block_chain(scan_state.last_proved_digest.as_slice(), &prefetched)?;
+    validate_scan_block_chain(
+        scan_state.last_proved_height,
+        scan_state.last_proved_digest.as_slice(),
+        &prefetched,
+    )?;
 
     let blocks_applied = prefetched.len() as u64;
     let mut last_done = None;

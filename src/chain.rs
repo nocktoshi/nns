@@ -213,7 +213,7 @@ pub fn hash_to_atom_bytes(h: &Hash) -> Vec<u8> {
 /// [`crate::kernel::decode_scan_state`] uses `atom.as_ne_bytes()` (minimal
 /// width), so genesis `0` is often `[]` or a single `0` byte, while
 /// gRPC [`hash_to_atom_bytes`] always returns 40 bytes (5×u64 LE). Those
-/// must still compare equal for [`validate_scan_block_chain`].
+/// must still compare equal where direct slice equality would fail.
 pub fn tip5_atom_semantic_eq(a: &[u8], b: &[u8]) -> bool {
     fn five_limbs(s: &[u8]) -> [u64; 5] {
         let mut padded = [0u8; 40];
@@ -232,6 +232,15 @@ pub fn tip5_atom_semantic_eq(a: &[u8], b: &[u8]) -> bool {
         out
     }
     five_limbs(a) == five_limbs(b)
+}
+
+/// Matches the kernel `%scan-block` `boot` guard in `hoon/app/app.hoon`: cursor still at
+/// genesis (`last-proved-height=0` and `last-proved-digest=@ux` `0`).
+///
+/// In that state the kernel accepts **any** `parent` on the first poke — block 1’s
+/// parent is the **real genesis header digest** on Nockchain, not `@ux` `0`.
+pub fn scan_cursor_is_genesis_boot(last_proved_height: u64, last_proved_digest: &[u8]) -> bool {
+    last_proved_height == 0 && tip5_atom_semantic_eq(last_proved_digest, &[0u8; 40])
 }
 
 /// Build a `common.v1.Hash` from 40 bytes of LE packed felts. Returns
@@ -718,12 +727,25 @@ pub async fn prefetch_scan_blocks_for_heights(
 /// Max concurrent `GetBlockDetails`+tx pulls while prefetching a batch.
 pub const SCAN_BLOCK_PREFETCH_CONCURRENCY: usize = 32;
 
-/// Verify prefetched headers link: first parent matches `expected_parent`,
-/// then each block's parent equals the previous block digest.
-pub fn validate_scan_block_chain(expected_parent: &[u8], blocks: &[ScanBlockFetch]) -> Result<(), String> {
-    let mut exp = expected_parent.to_vec();
-    for b in blocks {
-        if !tip5_atom_semantic_eq(b.parent.as_slice(), exp.as_slice()) {
+/// Verify prefetched headers link within `blocks`: each `parent` equals the
+/// prior row’s `page_digest`, anchored at [`scan_cursor_is_genesis_boot`].
+///
+/// When [`scan_cursor_is_genesis_boot`] is true, the **first** prefetched block’s
+/// parent is **not** checked against `last_proved_digest` (still `@ux` `0` in the
+/// kernel). That first parent must instead be the chain’s genesis digest — the hull
+/// mirrors the kernel’s `boot` branch and only RPC-consistency is enforced across
+/// subsequent rows in this batch.
+pub fn validate_scan_block_chain(
+    last_proved_height: u64,
+    last_proved_digest: &[u8],
+    blocks: &[ScanBlockFetch],
+) -> Result<(), String> {
+    let genesis_boot = scan_cursor_is_genesis_boot(last_proved_height, last_proved_digest);
+    let mut exp = last_proved_digest.to_vec();
+
+    for (i, b) in blocks.iter().enumerate() {
+        let skip_parent_vs_cursor = genesis_boot && i == 0;
+        if !skip_parent_vs_cursor && !tip5_atom_semantic_eq(b.parent.as_slice(), exp.as_slice()) {
             return Err(format!(
                 "prefetched scan batch parent mismatch at height {} (RPC skew or fork)",
                 b.height
@@ -903,7 +925,10 @@ pub async fn plan_anchor_advance(
 
 #[cfg(test)]
 mod tip5_semantic_eq_tests {
-    use super::{tip5_atom_semantic_eq, validate_scan_block_chain, ScanBlockFetch};
+    use super::{
+        scan_cursor_is_genesis_boot, tip5_atom_semantic_eq, validate_scan_block_chain,
+        ScanBlockFetch,
+    };
 
     #[test]
     fn zero_digest_empty_matches_rpc_forty_zeros() {
@@ -921,7 +946,30 @@ mod tip5_semantic_eq_tests {
     }
 
     #[test]
-    fn validate_chain_boot_digest_first_block_matches_rpc_genesis_parent() {
+    fn genesis_boot_detects_kernel_cursor() {
+        assert!(scan_cursor_is_genesis_boot(0, &[]));
+        assert!(scan_cursor_is_genesis_boot(0, &[0u8; 40]));
+        assert!(!scan_cursor_is_genesis_boot(1, &[]));
+        assert!(!scan_cursor_is_genesis_boot(0, &[1u8; 40]));
+    }
+
+    #[test]
+    fn validate_chain_boot_accepts_real_genesis_parent_not_kernel_zero() {
+        let mut genesis_hdr = [0u8; 40];
+        genesis_hdr[..8].copy_from_slice(&0xdeadbeefu64.to_le_bytes());
+
+        let b1 = ScanBlockFetch {
+            height: 1,
+            page_digest: vec![9u8; 40],
+            parent: genesis_hdr.to_vec(),
+            page_tx_ids: vec![],
+            tx_details: vec![],
+        };
+        validate_scan_block_chain(0, &[], &[b1]).expect("block1 parent is chain genesis, not @ux 0");
+    }
+
+    #[test]
+    fn validate_chain_boot_digest_first_block_all_zero_parent_still_ok() {
         let b = ScanBlockFetch {
             height: 1,
             page_digest: vec![9u8; 40],
@@ -929,7 +977,26 @@ mod tip5_semantic_eq_tests {
             page_tx_ids: vec![],
             tx_details: vec![],
         };
-        validate_scan_block_chain(&[], &[b]).expect("kernel peek [] vs RPC genesis parent");
+        validate_scan_block_chain(0, &[], &[b]).expect("kernel peek [] vs RPC genesis parent");
+    }
+
+    #[test]
+    fn validate_chain_second_block_links_to_first_page_digest() {
+        let b1 = ScanBlockFetch {
+            height: 1,
+            page_digest: vec![3u8; 40],
+            parent: vec![0xffu8; 40],
+            page_tx_ids: vec![],
+            tx_details: vec![],
+        };
+        let b2 = ScanBlockFetch {
+            height: 2,
+            page_digest: vec![4u8; 40],
+            parent: vec![3u8; 40],
+            page_tx_ids: vec![],
+            tx_details: vec![],
+        };
+        validate_scan_block_chain(0, &[], &[b1, b2]).expect("two-block batch from genesis");
     }
 }
 
