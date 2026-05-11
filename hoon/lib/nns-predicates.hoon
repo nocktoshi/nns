@@ -191,9 +191,10 @@
       spender-pkh=@          :: paying signer's pkh (atom form)
       treasury-amount=@ud    :: nicks paid to the NNS treasury
       output-lock-root=@t    :: v1: b58 lock root of treasury note output
-                             ::   (GRPC `note_name_b58`); must equal
-                             ::   canonical NNS lock (see `matches-treasury`
-                             ::   + Rust `DEFAULT_TREASURY_LOCK_ROOT_B58`)
+                             ::   (must equal canonical NNS lock; hull sums
+                             ::   amounts for outputs whose `note_data` `%lock`
+                             ::   decodes to that root — see
+                             ::   `src/payment.rs::output_pays_treasury_v1`)
   ==
 ::
 ::  +fee-for-name: NNS fee schedule, keyed on the stem length of a
@@ -364,9 +365,8 @@
   ^-  ?
   (gte treasury-amount.witness min-fee)
 ::
-::  +matches-treasury: treasury payment output's lock root (v1
-::  `note_name_b58` / NockBlocks lockroot) must be the canonical NNS
-::  treasury lock.
+::  +matches-treasury: witness lock-root cord must be the canonical NNS
+::  treasury lock (same as explorer / `%lock` jam hash).
 ::
 ++  matches-treasury
   |=  witness=nns-raw-tx-witness

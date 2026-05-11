@@ -1629,10 +1629,6 @@ and:
 40-byte LE-packed noun-digest:tip5 atom
 ```
 ### Follower
-Added anchor advance task:
-```text
-advance_anchor_once
-```
 Path Y: scans backlog blocks back-to-back; sleeps 2 s only when idle or after a scan error.
 Uses:
 ```text

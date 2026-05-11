@@ -183,17 +183,6 @@ pub struct AnchorAdvanceOutcome {
     pub count: u64,
 }
 
-/// Transitional wrapper: old callers that ask to advance the anchor now drive
-/// one `%scan-block` step.
-pub async fn advance_anchor_once(
-    state: &SharedState,
-) -> Result<Option<AnchorAdvanceOutcome>, String> {
-    Ok(scan_once(state).await?.map(|out| AnchorAdvanceOutcome {
-        tip_height: out.height,
-        tip_digest: out.digest,
-        count: out.blocks_applied,
-    }))
-}
 
 /// One pass of the Path Y block scanner. Returns `Ok(None)` if there is
 /// no finalized block beyond the kernel's current `/scan-state`.
