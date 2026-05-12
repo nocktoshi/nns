@@ -16,7 +16,7 @@ use std::time::Instant;
 
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
-use nns_vesl::chain::ScanBlockFetch;
+use nns_vesl::chain::{ScanBlockFetch, NNS_GENESIS_HEIGHT as H0};
 use nns_vesl::chain_follower::{
     apply_prefetched_scan_blocks, apply_prefetched_scan_blocks_with_candidates,
 };
@@ -170,14 +170,14 @@ async fn register_name_via_scan(state: &nns_vesl::state::SharedState, addr: &str
     let d1 = digest40(tx_byte.wrapping_add(0x10));
     let d2 = digest40(tx_byte.wrapping_add(0x20));
 
-    let b1 = scan_block_stub(1, parent.clone(), d1.clone(), vec![]);
+    let b1 = scan_block_stub(H0, parent.clone(), d1.clone(), vec![]);
     apply_prefetched_scan_blocks(state, vec![b1])
         .await
         .expect("apply scan block 1")
         .expect("scan outcome block 1");
     parent = peek_last_proved_digest(state).await;
 
-    let b2 = scan_block_stub(2, parent, d2, vec![vec![tx_byte]]);
+    let b2 = scan_block_stub(H0 + 1, parent, d2, vec![vec![tx_byte]]);
     let candidates = vec![synthetic_claim_candidate(name, addr, tx_byte, treasury)];
     apply_prefetched_scan_blocks_with_candidates(state, vec![b2], vec![candidates])
         .await

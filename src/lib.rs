@@ -11,7 +11,9 @@
 //! The Rust hull boots the kernel, runs [`chain_follower`](crate::chain_follower),
 //! and exposes **`GET /health`**, **`GET /status`**, **`GET /accumulator/:name`**
 //! only — see [`api`](crate::api). Offline verification is **`light_verify`**
-//! (`docs/wallet-verification.md`).
+//! (`docs/wallet-verification.md`). On chain mode, the first `%scan-block` after
+//! genesis uses [`chain::NNS_GENESIS_HEIGHT`](crate::chain::NNS_GENESIS_HEIGHT),
+//! mirroring `++nns-genesis-height` in the Hoon kernel.
 
 pub mod api;
 pub mod chain;

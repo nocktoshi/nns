@@ -9,8 +9,8 @@ use tokio::task::JoinHandle;
 
 use crate::chain::{
     base58_hash_to_atom_bytes, canonical_z_set_tx_order, fetch_current_tip_height,
-    prefetch_scan_blocks_for_heights, sort_claim_candidates_by_z_set_tx_order,
-    validate_scan_block_chain,
+    prefetch_scan_blocks_for_heights, scan_cursor_is_genesis_boot,
+    sort_claim_candidates_by_z_set_tx_order, validate_scan_block_chain,
 };
 use crate::claim_note::ClaimNoteV1;
 use crate::kernel::{
@@ -249,7 +249,18 @@ pub async fn scan_once(state: &SharedState) -> Result<Option<ScanBlockOutcome>, 
         return Ok(None);
     }
     let finalized_height = current_chain_tip.saturating_sub(DEFAULT_FINALITY_DEPTH);
-    let next_height = scan_state.last_proved_height.saturating_add(1);
+    let scan_first = {
+        let h = state.hull.lock().await;
+        h.nns_genesis_height
+    };
+    let next_height = if scan_cursor_is_genesis_boot(
+        scan_state.last_proved_height,
+        scan_state.last_proved_digest.as_slice(),
+    ) {
+        scan_first.max(scan_state.last_proved_height.saturating_add(1))
+    } else {
+        scan_state.last_proved_height.saturating_add(1)
+    };
     if next_height > finalized_height {
         return Ok(None);
     }

@@ -234,11 +234,20 @@ pub fn tip5_atom_semantic_eq(a: &[u8], b: &[u8]) -> bool {
     five_limbs(a) == five_limbs(b)
 }
 
+/// First Nockchain block height the chain follower applies after a **genesis**
+/// kernel cursor (`last-proved-height=0`, zero digest). Blocks below this are
+/// skipped: NNS did not ship at Nockchain genesis.
+///
+/// **Protocol constant:** must match `++nns-genesis-height` in
+/// `hoon/app/app.hoon` (not configurable in `vesl.toml` or env).
+pub const NNS_GENESIS_HEIGHT: u64 = 6_300;
+
 /// Matches the kernel `%scan-block` `boot` guard in `hoon/app/app.hoon`: cursor still at
 /// genesis (`last-proved-height=0` and `last-proved-digest=@ux` `0`).
 ///
-/// In that state the kernel accepts **any** `parent` on the first poke — block 1’s
-/// parent is the **real genesis header digest** on Nockchain, not `@ux` `0`.
+/// In that state the kernel accepts **any** `parent` on the first poke — block
+/// `nns-genesis-height`'s parent is the **real** header digest below
+/// that height on Nockchain, not `@ux` `0`.
 pub fn scan_cursor_is_genesis_boot(last_proved_height: u64, last_proved_digest: &[u8]) -> bool {
     last_proved_height == 0 && tip5_atom_semantic_eq(last_proved_digest, &[0u8; 40])
 }
@@ -1064,3 +1073,4 @@ mod z_set_order_tests {
         assert_eq!(sorted[1].witness.tx_id, canon[1]);
     }
 }
+

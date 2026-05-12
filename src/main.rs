@@ -18,6 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- Load settlement + NNS config from vesl.toml ---
     let toml_path = std::env::var("VESL_TOML").unwrap_or_else(|_| "vesl.toml".into());
     let toml_cfg = load_toml(&PathBuf::from(&toml_path));
+    let settlement_toml = toml_cfg.settlement_toml();
     let settlement = vesl_core::SettlementConfig::resolve(
         None,  // cli_mode
         None,  // cli_chain_endpoint
@@ -26,11 +27,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None,  // cli_coinbase_timelock_min
         None,  // cli_accept_timeout
         None,  // cli_seed_phrase
-        &toml_cfg, None, // default_signing_key (unused for local)
+        &settlement_toml,
+        None, // default_signing_key (unused for local)
     );
 
     println!("=== nns-vesl ===");
     println!("  settlement mode: {}", settlement.mode);
+    println!(
+        "  nns genesis height (protocol): {}",
+        nns_vesl::chain::NNS_GENESIS_HEIGHT
+    );
 
     // --- Boot the kernel ---
     let kernel_path = std::env::var("NNS_KERNEL_JAM").unwrap_or_else(|_| "out.jam".into());
@@ -149,7 +155,19 @@ struct Raw {
     accept_timeout_secs: Option<u64>,
 }
 
-fn load_toml(path: &std::path::Path) -> vesl_core::SettlementToml {
+impl Raw {
+    fn settlement_toml(&self) -> vesl_core::SettlementToml {
+        vesl_core::SettlementToml {
+            settlement_mode: self.settlement_mode.clone(),
+            chain_endpoint: self.chain_endpoint.clone(),
+            tx_fee: self.tx_fee,
+            coinbase_timelock_min: self.coinbase_timelock_min,
+            accept_timeout_secs: self.accept_timeout_secs,
+        }
+    }
+}
+
+fn load_toml(path: &std::path::Path) -> Raw {
     let raw: Raw = match std::fs::read_to_string(path) {
         Ok(contents) => toml::from_str(&contents).unwrap_or_else(|e| {
             eprintln!("warning: failed to parse {}: {e}", path.display());
@@ -157,11 +175,5 @@ fn load_toml(path: &std::path::Path) -> vesl_core::SettlementToml {
         }),
         Err(_) => Raw::default(),
     };
-    return vesl_core::SettlementToml {
-        settlement_mode: raw.settlement_mode,
-        chain_endpoint: raw.chain_endpoint,
-        tx_fee: raw.tx_fee,
-        coinbase_timelock_min: raw.coinbase_timelock_min,
-        accept_timeout_secs: raw.accept_timeout_secs,
-    };
+    raw
 }

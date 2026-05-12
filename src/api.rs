@@ -236,12 +236,13 @@ async fn accumulator_handler(
 }
 
 async fn status(State(state): State<SharedState>) -> Json<serde_json::Value> {
-    let (settlement_mode, chain_endpoint, follower) = {
+    let (settlement_mode, chain_endpoint, follower, nns_genesis_height) = {
         let h = state.hull.lock().await;
         (
             h.settlement.mode.to_string(),
             h.settlement.chain_endpoint.clone(),
             h.follower.clone(),
+            h.nns_genesis_height,
         )
     };
 
@@ -297,6 +298,7 @@ async fn status(State(state): State<SharedState>) -> Json<serde_json::Value> {
             "finality_depth":                  crate::chain_follower::DEFAULT_FINALITY_DEPTH,
             "max_advance_batch":               crate::chain_follower::DEFAULT_MAX_ADVANCE_BATCH,
             "scan_batch_blocks_default":       crate::chain_follower::DEFAULT_SCAN_BATCH_BLOCKS,
+            "nns_genesis_height":                nns_genesis_height,
         }),
     }))
 }

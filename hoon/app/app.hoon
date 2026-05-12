@@ -36,6 +36,12 @@
 =>
 |%
 ::
+::  First Nockchain block height the hull may `%scan-block` after a
+::  fresh kernel (cursor height/digest both zero). Before this height
+::  NNS did not exist on-chain.
+::
+++  nns-genesis-height  6.300
+::
 ::  +$anchor-header: minimal header triple sufficient for parent-chain
 ::  verification. The full Nockchain page header carries a `proof:sp`,
 ::  tx-ids z-set, coinbase split, etc. — none of which the kernel needs
@@ -124,8 +130,10 @@
       [%prove-identity ~]
       ::  Path Y2: ingest one Nockchain block worth of `nns/v1/claim`
       ::  candidates. Verifies `parent` links to `last-proved-digest`,
-      ::  `height` is strictly the successor of `last-proved-height`,
-      ::  then folds valid candidates into the accumulator via
+      ::  `height` is the successor of `last-proved-height`, except on
+      ::  genesis boot where it must be at least `nns-genesis-height`
+      ::  (NNS shipped long after Nockchain genesis; blocks below that have
+      ::  no claim notes). Then folds valid candidates into the accumulator via
       ::  `+claim-scanner:np`. On success advances the scan cursor to
       ::  this block's digest and emits `[%scan-block-done ...]`.
       ::
@@ -565,7 +573,11 @@
       ?.  ?|(boot =(parent.c last-proved-digest.state))
         :_  state
         ~[[%scan-block-error 'parent-mismatch']]
-      ?.  =(height.c +(last-proved-height.state))
+      =/  want-height=@ud
+        ?:  boot
+          (max +(last-proved-height.state) nns-genesis-height)
+        +(last-proved-height.state)
+      ?.  =(height.c want-height)
         :_  state
         ~[[%scan-block-error 'height-not-successor']]
       ::  Claim-scanner + accumulator Tip5 root. Page summary uses a flat

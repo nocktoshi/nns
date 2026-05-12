@@ -18,6 +18,9 @@ use tokio::sync::Mutex;
 pub struct HullState {
     pub output_dir: PathBuf,
     pub settlement: vesl_core::SettlementConfig,
+    /// First block height to `%scan-block` after a genesis cursor; mirrors
+    /// [`crate::chain::NNS_GENESIS_HEIGHT`] (same value as `++nns-genesis-height` in Hoon).
+    pub nns_genesis_height: u64,
     pub follower: FollowerObservability,
 }
 
@@ -99,6 +102,7 @@ impl AppState {
             hull: Mutex::new(HullState {
                 output_dir,
                 settlement,
+                nns_genesis_height: crate::chain::NNS_GENESIS_HEIGHT.max(1),
                 follower: FollowerObservability::default(),
             }),
             follower_scans_since_checkpoint: AtomicU64::new(0),

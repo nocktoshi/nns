@@ -23,7 +23,7 @@ use nockapp_grpc::pb::public::v2::transaction_output::AmountRequired;
 use nockapp_grpc::pb::public::v2::{
     TransactionDetails, TransactionInput, TransactionOutput,
 };
-use nns_vesl::chain::{canonical_z_set_tx_order, ScanBlockFetch};
+use nns_vesl::chain::{canonical_z_set_tx_order, ScanBlockFetch, NNS_GENESIS_HEIGHT as H0};
 use nns_vesl::chain_follower::{apply_prefetched_scan_blocks, claim_candidates_from_fetch};
 use nns_vesl::claim_note::ClaimNoteV1;
 use nns_vesl::kernel::{
@@ -253,7 +253,7 @@ async fn grpcurl_fixture_accumulator_inserts_claimed_name() {
 
     let d1 = digest40(0xC1);
     let b1 = ScanBlockFetch {
-        height: 1,
+        height: H0,
         page_digest: d1.clone(),
         parent: genesis_parent,
         page_tx_ids: vec![],
@@ -266,7 +266,7 @@ async fn grpcurl_fixture_accumulator_inserts_claimed_name() {
 
     let d2 = digest40(0xC2);
     let fetch2 = ScanBlockFetch {
-        height: 2,
+        height: H0 + 1,
         page_digest: d2.clone(),
         parent: d1.clone(),
         page_tx_ids: page_tx_ids.clone(),
@@ -297,9 +297,9 @@ async fn grpcurl_fixture_accumulator_inserts_claimed_name() {
         st.accumulator_size
     );
 
-    // Height 3: same claim again — duplicate name is skipped, scan still succeeds.
+    // Next height after claim block: duplicate-name rescan still succeeds.
     let d3 = digest40(0xC3);
-    let poke3 = build_scan_block_poke(&d2, 3, &d3, &page_tx_ids, &candidates);
+    let poke3 = build_scan_block_poke(&d2, H0 + 2, &d3, &page_tx_ids, &candidates);
     let mut k = state.kernel.lock().await;
     let fx = k
         .poke(nockapp::wire::SystemWire.to_wire(), poke3)

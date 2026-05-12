@@ -100,6 +100,10 @@ async fn status_exposes_scan_state_and_follower() {
     let follower = &body["follower"];
     assert_eq!(follower["finality_depth"], 10);
     assert_eq!(follower["max_advance_batch"], 1);
+    assert_eq!(
+        follower["nns_genesis_height"],
+        nns_vesl::chain::NNS_GENESIS_HEIGHT
+    );
 }
 
 #[tokio::test]

@@ -19,6 +19,7 @@ use std::sync::{Arc, Once};
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use serde_json::{json, Value};
+use nns_vesl::chain::NNS_GENESIS_HEIGHT as H0;
 use nns_vesl::chain::ScanBlockFetch;
 use nns_vesl::chain_follower::{
     apply_prefetched_scan_blocks, apply_prefetched_scan_blocks_with_candidates,
@@ -180,7 +181,7 @@ async fn scan_block_skips_underpaid_witness() {
     let fee_amt = fee_for_name(NAME);
     let (_tmp, state) = setup().await;
     let parent0 = peek_last_proved_digest(&state).await;
-    let poke1 = build_scan_block_poke(&parent0, 1, &digest40(0x11), &[], &[]);
+    let poke1 = build_scan_block_poke(&parent0, H0, &digest40(0x11), &[], &[]);
     {
         let mut k = state.kernel.lock().await;
         let fx = k.poke(SystemWire.to_wire(), poke1).await.expect("height-1 poke");
@@ -191,7 +192,7 @@ async fn scan_block_skips_underpaid_witness() {
     cand.witness.treasury_amount = 0;
     let poke2 = build_scan_block_poke(
         &parent1,
-        2,
+        H0 + 1,
         &digest40(0x22),
         &[vec![0x07], vec![0x08]],
         std::slice::from_ref(&cand),
@@ -208,7 +209,7 @@ async fn scan_block_skips_sender_mismatch() {
     let fee_amt = fee_for_name(NAME);
     let (_tmp, state) = setup().await;
     let parent0 = peek_last_proved_digest(&state).await;
-    let poke1 = build_scan_block_poke(&parent0, 1, &digest40(0x11), &[], &[]);
+    let poke1 = build_scan_block_poke(&parent0, H0, &digest40(0x11), &[], &[]);
     {
         let mut k = state.kernel.lock().await;
         k.poke(SystemWire.to_wire(), poke1)
@@ -220,7 +221,7 @@ async fn scan_block_skips_sender_mismatch() {
     cand.witness.spender_pkh = b"not-the-owner".to_vec();
     let poke2 = build_scan_block_poke(
         &parent1,
-        2,
+        H0 + 1,
         &digest40(0x22),
         &[vec![0x07], vec![0x08]],
         std::slice::from_ref(&cand),
@@ -237,7 +238,7 @@ async fn scan_block_skips_witness_tx_id_mismatch() {
     let fee_amt = fee_for_name(NAME);
     let (_tmp, state) = setup().await;
     let parent0 = peek_last_proved_digest(&state).await;
-    let poke1 = build_scan_block_poke(&parent0, 1, &digest40(0x11), &[], &[]);
+    let poke1 = build_scan_block_poke(&parent0, H0, &digest40(0x11), &[], &[]);
     {
         let mut k = state.kernel.lock().await;
         k.poke(SystemWire.to_wire(), poke1)
@@ -249,7 +250,7 @@ async fn scan_block_skips_witness_tx_id_mismatch() {
     cand.witness.tx_id = vec![0x99];
     let poke2 = build_scan_block_poke(
         &parent1,
-        2,
+        H0 + 1,
         &digest40(0x22),
         &[vec![0x07], vec![0x08]],
         std::slice::from_ref(&cand),
@@ -278,7 +279,7 @@ async fn mock_chain_three_blocks_first_claim_address_wins_in_accumulator() {
     let (_tmp, state) = setup().await;
     let mut parent = peek_last_proved_digest(&state).await;
 
-    let b1 = scan_block_fetch_stub(1, parent.clone(), d1.clone(), vec![]);
+    let b1 = scan_block_fetch_stub(H0, parent.clone(), d1.clone(), vec![]);
     apply_prefetched_scan_blocks(&state, vec![b1])
         .await
         .expect("apply block 1")
@@ -286,7 +287,7 @@ async fn mock_chain_three_blocks_first_claim_address_wins_in_accumulator() {
     parent = peek_last_proved_digest(&state).await;
 
     let b2 = scan_block_fetch_stub(
-        2,
+        H0 + 1,
         parent.clone(),
         d2,
         vec![vec![0x07], vec![0x08]],
@@ -298,7 +299,7 @@ async fn mock_chain_three_blocks_first_claim_address_wins_in_accumulator() {
         .expect("scan outcome");
     parent = peek_last_proved_digest(&state).await;
 
-    let b3 = scan_block_fetch_stub(3, parent, d3, vec![vec![0x09]]);
+    let b3 = scan_block_fetch_stub(H0 + 2, parent, d3, vec![vec![0x09]]);
     let cand3 = vec![synthetic_claim_candidate(NAME, ADDR2, 0x09, treasury)];
     apply_prefetched_scan_blocks_with_candidates(&state, vec![b3], vec![cand3])
         .await
@@ -325,7 +326,7 @@ async fn same_block_two_addresses_claim_same_name_first_in_block_wins() {
     let (_tmp, state) = setup().await;
     let mut parent = peek_last_proved_digest(&state).await;
 
-    let b1 = scan_block_fetch_stub(1, parent.clone(), digest40(0xC1), vec![]);
+    let b1 = scan_block_fetch_stub(H0, parent.clone(), digest40(0xC1), vec![]);
     apply_prefetched_scan_blocks(&state, vec![b1])
         .await
         .expect("apply block 1")
@@ -333,7 +334,7 @@ async fn same_block_two_addresses_claim_same_name_first_in_block_wins() {
     parent = peek_last_proved_digest(&state).await;
 
     let b2 = scan_block_fetch_stub(
-        2,
+        H0 + 1,
         parent,
         digest40(0xC2),
         vec![vec![0x07], vec![0x08]],

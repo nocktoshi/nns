@@ -118,7 +118,11 @@ installed at process start (see `src/main.rs`), which avoids the
 panic that rustls 0.23 throws when multiple backends are visible.
 
 With these lines the follower starts scanning blocks into the kernel
-(`%scan-block`). Check `curl -s localhost:3000/status | jq .follower`
+(`%scan-block`). On a **fresh** kernel the first ingested block height is
+**6300** (NNS did not exist on earlier Nockchain blocks). That height is a
+**protocol constant** defined as `++nns-genesis-height` in `hoon/app/app.hoon`
+and mirrored in Rust as `NNS_GENESIS_HEIGHT`.
+Rebuild `out.jam` if you change the Hoon constant. Check `curl -s localhost:3000/status | jq .follower`
 after ~30 s to confirm `chain_tip_height` is populated.
 
 ### Nockchain checkout: NoteData on outputs + wallet tooling

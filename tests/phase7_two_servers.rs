@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use nns_vesl::chain::NNS_GENESIS_HEIGHT as H0;
 use nns_vesl::kernel::{
     build_scan_block_poke, build_scan_state_peek, decode_scan_state, first_scan_block_done,
 };
@@ -55,14 +56,19 @@ fn digest(seed: u8) -> Vec<u8> {
     vec![seed; 40]
 }
 
-/// Scan blocks `1..=end_inclusive` from a fresh kernel (genesis cursor).
-async fn scan_blocks_1_through(state: &SharedState, end_inclusive: u64) {
-    for h in 1..=end_inclusive {
-        let page = digest(h as u8);
-        let parent = if h == 1 {
+fn seq_page_byte(h: u64) -> u8 {
+    ((h - H0 + 1) & 0xff) as u8
+}
+
+/// Scan `blocks` many consecutive heights starting at [`H0`] (genesis cursor).
+async fn scan_blocks_from_chain_origin(state: &SharedState, blocks: u64) {
+    for i in 0..blocks {
+        let h = H0 + i;
+        let page = digest(seq_page_byte(h));
+        let parent = if i == 0 {
             digest(0xEE)
         } else {
-            digest((h - 1) as u8)
+            digest(seq_page_byte(h - 1))
         };
         let poke = build_scan_block_poke(&parent, h, &page, &[], &[]);
         let effects = {
@@ -81,8 +87,8 @@ async fn scan_blocks_1_through(state: &SharedState, end_inclusive: u64) {
 /// must already be at `start_height`).
 async fn scan_blocks_continue(state: &SharedState, start_height: u64, end_inclusive: u64) {
     for h in (start_height + 1)..=end_inclusive {
-        let page = digest(h as u8);
-        let parent = digest((h - 1) as u8);
+        let page = digest(seq_page_byte(h));
+        let parent = digest(seq_page_byte(h - 1));
         let poke = build_scan_block_poke(&parent, h, &page, &[], &[]);
         let effects = {
             let mut k = state.kernel.lock().await;
@@ -110,11 +116,11 @@ async fn peek_height(state: &SharedState) -> u64 {
 #[tokio::test]
 async fn two_kernels_divergent_scan_cursors() {
     let (_tmp_a, state_a) = boot_kernel("nns-pathy-a").await;
-    scan_blocks_1_through(&state_a, 25).await;
+    scan_blocks_from_chain_origin(&state_a, 25).await;
 
     let (_tmp_b, state_b) = boot_kernel("nns-pathy-b").await;
 
-    assert_eq!(peek_height(&state_a).await, 25);
+    assert_eq!(peek_height(&state_a).await, H0 + 24);
     assert_eq!(peek_height(&state_b).await, 0);
 }
 
@@ -123,9 +129,9 @@ async fn scan_cursor_advances_when_catching_up() {
     let (_tmp, state) = boot_kernel("nns-pathy-catchup").await;
     assert_eq!(peek_height(&state).await, 0);
 
-    scan_blocks_1_through(&state, 5).await;
-    assert_eq!(peek_height(&state).await, 5);
+    scan_blocks_from_chain_origin(&state, 5).await;
+    assert_eq!(peek_height(&state).await, H0 + 4);
 
-    scan_blocks_continue(&state, 5, 8).await;
-    assert_eq!(peek_height(&state).await, 8);
+    scan_blocks_continue(&state, H0 + 4, H0 + 7).await;
+    assert_eq!(peek_height(&state).await, H0 + 7);
 }

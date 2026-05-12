@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use nns_vesl::chain::NNS_GENESIS_HEIGHT as H0;
 use nns_vesl::kernel::{
     build_scan_block_poke, build_scan_state_peek, decode_scan_state, first_scan_block_done,
     first_scan_block_error,
@@ -65,10 +66,10 @@ async fn peek_scan(state: &nns_vesl::state::SharedState) -> nns_vesl::kernel::Sc
 }
 
 #[tokio::test]
-async fn scan_block_bootstrap_accepts_height_1() {
+async fn scan_block_bootstrap_accepts_first_configured_height() {
     let (_tmp, state) = boot_kernel().await;
     let d1 = digest(1);
-    let poke = build_scan_block_poke(&digest(0xCD), 1, &d1, &[], &[]);
+    let poke = build_scan_block_poke(&digest(0xCD), H0, &d1, &[], &[]);
     let effects = {
         let mut k = state.kernel.lock().await;
         k.poke(SystemWire.to_wire(), poke)
@@ -76,12 +77,12 @@ async fn scan_block_bootstrap_accepts_height_1() {
             .expect("scan-block poke")
     };
     let done = first_scan_block_done(&effects).expect("scan-block-done");
-    assert_eq!(done.height, 1);
+    assert_eq!(done.height, H0);
     assert_eq!(done.digest, d1);
     assert!(first_scan_block_error(&effects).is_none());
 
     let s = peek_scan(&state).await;
-    assert_eq!(s.last_proved_height, 1);
+    assert_eq!(s.last_proved_height, H0);
     assert_eq!(s.last_proved_digest, d1);
 }
 
@@ -94,7 +95,7 @@ async fn scan_block_extends_after_bootstrap() {
         let mut k = state.kernel.lock().await;
         k.poke(
             SystemWire.to_wire(),
-            build_scan_block_poke(&digest(9), 1, &d1, &[], &[]),
+            build_scan_block_poke(&digest(9), H0, &d1, &[], &[]),
         )
         .await
         .expect("first scan");
@@ -103,17 +104,17 @@ async fn scan_block_extends_after_bootstrap() {
         let mut k = state.kernel.lock().await;
         k.poke(
             SystemWire.to_wire(),
-            build_scan_block_poke(&d1, 2, &d2, &[], &[]),
+            build_scan_block_poke(&d1, H0 + 1, &d2, &[], &[]),
         )
         .await
         .expect("second scan")
     };
     let done = first_scan_block_done(&effects).expect("scan-block-done");
-    assert_eq!(done.height, 2);
+    assert_eq!(done.height, H0 + 1);
     assert_eq!(done.digest, d2);
 
     let s = peek_scan(&state).await;
-    assert_eq!(s.last_proved_height, 2);
+    assert_eq!(s.last_proved_height, H0 + 1);
     assert_eq!(s.last_proved_digest, d2);
 }
 
@@ -125,7 +126,7 @@ async fn scan_block_rejects_parent_mismatch() {
         let mut k = state.kernel.lock().await;
         k.poke(
             SystemWire.to_wire(),
-            build_scan_block_poke(&digest(0), 1, &d1, &[], &[]),
+            build_scan_block_poke(&digest(0), H0, &d1, &[], &[]),
         )
         .await
         .expect("bootstrap scan");
@@ -135,7 +136,7 @@ async fn scan_block_rejects_parent_mismatch() {
         let mut k = state.kernel.lock().await;
         k.poke(
             SystemWire.to_wire(),
-            build_scan_block_poke(&bad_parent, 2, &digest(3), &[], &[]),
+            build_scan_block_poke(&bad_parent, H0 + 1, &digest(3), &[], &[]),
         )
         .await
         .expect("poke")
@@ -147,7 +148,7 @@ async fn scan_block_rejects_parent_mismatch() {
         "expected parent-mismatch, got: {err}"
     );
     let s = peek_scan(&state).await;
-    assert_eq!(s.last_proved_height, 1);
+    assert_eq!(s.last_proved_height, H0);
     assert_eq!(s.last_proved_digest, d1);
 }
 
@@ -159,7 +160,7 @@ async fn scan_block_rejects_height_not_successor() {
         let mut k = state.kernel.lock().await;
         k.poke(
             SystemWire.to_wire(),
-            build_scan_block_poke(&digest(0), 1, &d1, &[], &[]),
+            build_scan_block_poke(&digest(0), H0, &d1, &[], &[]),
         )
         .await
         .expect("bootstrap scan");
@@ -168,7 +169,7 @@ async fn scan_block_rejects_height_not_successor() {
         let mut k = state.kernel.lock().await;
         k.poke(
             SystemWire.to_wire(),
-            build_scan_block_poke(&d1, 3, &digest(3), &[], &[]),
+            build_scan_block_poke(&d1, H0 + 2, &digest(3), &[], &[]),
         )
         .await
         .expect("gap poke")
@@ -187,7 +188,7 @@ async fn scan_block_rejects_bad_first_height() {
         let mut k = state.kernel.lock().await;
         k.poke(
             SystemWire.to_wire(),
-            build_scan_block_poke(&digest(0), 2, &digest(2), &[], &[]),
+            build_scan_block_poke(&digest(0), H0 + 1, &digest(2), &[], &[]),
         )
         .await
         .expect("poke")
@@ -195,6 +196,6 @@ async fn scan_block_rejects_bad_first_height() {
     let err = first_scan_block_error(&effects).expect("scan-block-error");
     assert!(
         err.contains("height-not-successor"),
-        "first block must be height 1: {err}"
+        "first block must be height {H0}: {err}"
     );
 }

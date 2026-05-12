@@ -9,7 +9,7 @@ use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use serde_json::Value;
 use nns_vesl::chain::{
-    canonical_z_set_tx_order, tip5_hash_to_tx_atom_bytes,
+    canonical_z_set_tx_order, tip5_hash_to_tx_atom_bytes, NNS_GENESIS_HEIGHT as H0,
 };
 use nns_vesl::chain_follower::apply_prefetched_scan_blocks_with_candidates;
 use nns_vesl::kernel::build_scan_state_peek;
@@ -175,7 +175,7 @@ async fn same_block_same_name_z_set_order_wins_not_rpc_list_order() {
     let (_tmp, state) = setup().await;
     let mut parent = peek_last_proved_digest(&state).await;
 
-    let b1 = scan_block_fetch_stub(1, parent.clone(), digest40(0xE1), vec![]);
+    let b1 = scan_block_fetch_stub(H0, parent.clone(), digest40(0xE1), vec![]);
     apply_prefetched_scan_blocks_with_candidates(&state, vec![b1], vec![vec![]])
         .await
         .expect("block 1")
@@ -183,7 +183,7 @@ async fn same_block_same_name_z_set_order_wins_not_rpc_list_order() {
     parent = peek_last_proved_digest(&state).await;
 
     let b2 = scan_block_fetch_stub(
-        2,
+        H0 + 1,
         parent,
         digest40(0xE2),
         vec![atom_hi.clone(), atom_lo.clone()],
