@@ -240,7 +240,7 @@ pub fn tip5_atom_semantic_eq(a: &[u8], b: &[u8]) -> bool {
 ///
 /// **Protocol constant:** must match `++nns-genesis-height` in
 /// `hoon/app/app.hoon` (not configurable in `vesl.toml` or env).
-pub const NNS_GENESIS_HEIGHT: u64 = 6_300;
+pub const NNS_GENESIS_HEIGHT: u64 = 63_000;
 
 /// Matches the kernel `%scan-block` `boot` guard in `hoon/app/app.hoon`: cursor still at
 /// genesis (`last-proved-height=0` and `last-proved-digest=@ux` `0`).

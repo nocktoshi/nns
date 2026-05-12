@@ -40,7 +40,7 @@
 ::  fresh kernel (cursor height/digest both zero). Before this height
 ::  NNS did not exist on-chain.
 ::
-++  nns-genesis-height  6.300
+++  nns-genesis-height  63.000
 ::
 ::  +$anchor-header: minimal header triple sufficient for parent-chain
 ::  verification. The full Nockchain page header carries a `proof:sp`,
