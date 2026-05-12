@@ -882,7 +882,8 @@
   =/  c=nns-claim-candidate  i.candidates
   =?  acc  (valid-claim-candidate pag c)
     =/  entry=nns-accumulator-entry:na
-      :*  owner=owner.c
+      :*  name=name.c
+          owner=owner.c
           tx-hash=tx-hash.c
           claim-height=height
           block-digest=digest.pag

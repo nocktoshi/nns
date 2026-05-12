@@ -118,6 +118,43 @@ async fn accumulator_lookup_404_for_unregistered_name() {
 }
 
 #[tokio::test]
+async fn accumulator_lookup_404_for_long_stem_name() {
+    let (_tmp, state) = setup().await;
+    let router = api::router(state);
+
+    let (status, body) = request_json(router, "GET", "/accumulator/nockchain.nock", None).await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["error"], "not registered");
+}
+
+/// Regression: absent-key peeks must not depend on stem length (fee tiers
+/// change at 5 and 10 characters).
+#[tokio::test]
+async fn accumulator_lookup_404_many_unregistered_stems() {
+    let (_tmp, state) = setup().await;
+    let router = api::router(state);
+    let names = [
+        "a.nock",
+        "abcd.nock",
+        "alice.nock",
+        "nockchain.nock",
+        "zzzzzzzzzz.nock",
+        "a2345678901234.nock",
+    ];
+    for name in names {
+        let path = format!("/accumulator/{name}");
+        let (status, body) = request_json(router.clone(), "GET", &path, None).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "expected 404 for unregistered {name}, got {status}: {body}"
+        );
+        assert_eq!(body["error"], "not registered", "name={name}");
+    }
+}
+
+#[tokio::test]
 async fn accumulator_lookup_rejects_invalid_name() {
     let (_tmp, state) = setup().await;
     let router = api::router(state);

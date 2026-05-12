@@ -5,7 +5,12 @@
 //! The kernel wraps `+claim-scanner` and `+root-atom:na` in `+mule`. Successful inserts compute
 //! the accumulator root via `+root-from-hashable:na` (Tip5 `hash-hashable` over a canonical
 //! encoding). Predicate failures (underpaid treasury, sender mismatch, tx-id mismatch, etc.)
-//! are skipped and **do not** trap.
+//! short-circuit `+valid-claim-candidate` and **do not** trap — `claim-scanner-trap` means the
+//! interpreter crashed inside `+claim-scanner` (for example a jet fault during `+insert:na`),
+//! not “this claim was rejected”.
+//!
+//! Z-map keys are Tip5 5-limb digests of the name cord (`++name-key:na`), matching the ``based``
+//! key shape used for v1 `tx-id` rows — see `hoon/lib/nns-accumulator.hoon`.
 //!
 //! Tests load `out.jam` (or `NNS_KERNEL_JAM`). Rebuild the kernel jam after Hoon changes:
 //! `make kernel-jam` or `hoonc --new hoon/app/app.hoon hoon/`.
@@ -356,4 +361,169 @@ async fn same_block_two_addresses_claim_same_name_first_in_block_wins() {
         value["owner"], ADDR1,
         "first candidate in block tx order must win when two claims target the same name"
     );
+}
+
+/// Two distinct names in consecutive scans — `nns.nock` then `nockchain.nock` (regression for
+/// z-map keys: cord preimage + Tip5 5-limb `++name-key`).
+#[tokio::test]
+async fn sequential_nns_then_nockchain_both_accumulate() {
+    const OWNER: &str = "owner-address";
+    let fee_nns = fee_for_name("nns.nock");
+    let fee_nc = fee_for_name("nockchain.nock");
+
+    let (_tmp, state) = setup().await;
+    let mut parent = peek_last_proved_digest(&state).await;
+
+    let d1 = digest40(0xD1);
+    let b1 = scan_block_fetch_stub(H0, parent.clone(), d1.clone(), vec![]);
+    apply_prefetched_scan_blocks(&state, vec![b1])
+        .await
+        .expect("apply block 1")
+        .expect("scan outcome");
+    parent = peek_last_proved_digest(&state).await;
+
+    let d2 = digest40(0xD2);
+    let b2 = scan_block_fetch_stub(H0 + 1, parent.clone(), d2.clone(), vec![vec![0x71]]);
+    let cand_nns = vec![synthetic_claim_candidate("nns.nock", OWNER, 0x71, fee_nns)];
+    apply_prefetched_scan_blocks_with_candidates(&state, vec![b2], vec![cand_nns])
+        .await
+        .expect("apply block 2")
+        .expect("scan outcome");
+    parent = peek_last_proved_digest(&state).await;
+
+    let d3 = digest40(0xD3);
+    let b3 = scan_block_fetch_stub(H0 + 2, parent, d3, vec![vec![0x81]]);
+    let cand_nc = vec![synthetic_claim_candidate("nockchain.nock", OWNER, 0x81, fee_nc)];
+    apply_prefetched_scan_blocks_with_candidates(&state, vec![b3], vec![cand_nc])
+        .await
+        .expect("apply block 3")
+        .expect("scan outcome");
+
+    let _ = get_accumulator_json(state.clone(), "nns.nock", "seq_nns_nc").await;
+    let _ = get_accumulator_json(state, "nockchain.nock", "seq_nc").await;
+}
+
+/// Two distinct names (`aa.nock` then `bb.nock`) — multi-row scan without the `nns`↔`nockchain` key pair.
+#[tokio::test]
+async fn sequential_aa_then_bb_two_distinct_names_accumulate() {
+    const OWNER: &str = "owner-address";
+    let fee_aa = fee_for_name("aa.nock");
+    let fee_bb = fee_for_name("bb.nock");
+
+    let (_tmp, state) = setup().await;
+    let mut parent = peek_last_proved_digest(&state).await;
+
+    let d1 = digest40(0xF1);
+    let b1 = scan_block_fetch_stub(H0, parent.clone(), d1.clone(), vec![]);
+    apply_prefetched_scan_blocks(&state, vec![b1])
+        .await
+        .expect("apply block 1")
+        .expect("scan outcome");
+    parent = peek_last_proved_digest(&state).await;
+
+    let d2 = digest40(0xF2);
+    let b2 = scan_block_fetch_stub(H0 + 1, parent.clone(), d2.clone(), vec![vec![0xA1]]);
+    let cand1 = vec![synthetic_claim_candidate("aa.nock", OWNER, 0xA1, fee_aa)];
+    apply_prefetched_scan_blocks_with_candidates(&state, vec![b2], vec![cand1])
+        .await
+        .expect("apply block 2")
+        .expect("scan outcome");
+    parent = peek_last_proved_digest(&state).await;
+
+    let d3 = digest40(0xF3);
+    let b3 = scan_block_fetch_stub(H0 + 2, parent, d3, vec![vec![0xA2]]);
+    let cand2 = vec![synthetic_claim_candidate("bb.nock", OWNER, 0xA2, fee_bb)];
+    apply_prefetched_scan_blocks_with_candidates(&state, vec![b3], vec![cand2])
+        .await
+        .expect("apply block 3")
+        .expect("scan outcome");
+
+    let _ = get_accumulator_json(state.clone(), "aa.nock", "aa_first").await;
+    let _ = get_accumulator_json(state.clone(), "bb.nock", "bb_second").await;
+}
+
+/// `nockchain.nock` first, then `zzz.nock` — second insert after a 9-char stem name.
+#[tokio::test]
+async fn sequential_nockchain_then_zzz_both_accumulate() {
+    const OWNER: &str = "owner-address";
+    let fee_nc = fee_for_name("nockchain.nock");
+    let fee_zzz = fee_for_name("zzz.nock");
+
+    let (_tmp, state) = setup().await;
+    let mut parent = peek_last_proved_digest(&state).await;
+
+    let d1 = digest40(0xE1);
+    let b1 = scan_block_fetch_stub(H0, parent.clone(), d1.clone(), vec![]);
+    apply_prefetched_scan_blocks(&state, vec![b1])
+        .await
+        .expect("apply block 1")
+        .expect("scan outcome");
+    parent = peek_last_proved_digest(&state).await;
+
+    let d2 = digest40(0xE2);
+    let b2 = scan_block_fetch_stub(H0 + 1, parent.clone(), d2.clone(), vec![vec![0x91]]);
+    let cand1 = vec![synthetic_claim_candidate("nockchain.nock", OWNER, 0x91, fee_nc)];
+    apply_prefetched_scan_blocks_with_candidates(&state, vec![b2], vec![cand1])
+        .await
+        .expect("apply block 2")
+        .expect("scan outcome");
+    parent = peek_last_proved_digest(&state).await;
+
+    let d3 = digest40(0xE3);
+    let b3 = scan_block_fetch_stub(H0 + 2, parent, d3, vec![vec![0x92]]);
+    let cand2 = vec![synthetic_claim_candidate("zzz.nock", OWNER, 0x92, fee_zzz)];
+    apply_prefetched_scan_blocks_with_candidates(&state, vec![b3], vec![cand2])
+        .await
+        .expect("apply block 3")
+        .expect("scan outcome");
+
+    let _ = get_accumulator_json(state.clone(), "nockchain.nock", "nc_first").await;
+    let _ = get_accumulator_json(state.clone(), "zzz.nock", "zzz_second").await;
+}
+
+#[tokio::test]
+async fn sequential_nns_then_adjacent_stem_claims_both_accumulate() {
+    const OWNER: &str = "owner-address";
+    let fee_nns = fee_for_name("nns.nock");
+    let treasury_nns = fee_nns;
+
+    let (_tmp, state) = setup().await;
+    let mut parent = peek_last_proved_digest(&state).await;
+
+    let d1 = digest40(0xD1);
+    let b1 = scan_block_fetch_stub(H0, parent.clone(), d1.clone(), vec![]);
+    apply_prefetched_scan_blocks(&state, vec![b1])
+        .await
+        .expect("apply block 1")
+        .expect("scan outcome");
+    parent = peek_last_proved_digest(&state).await;
+
+    let d2 = digest40(0xD2);
+    let b2 = scan_block_fetch_stub(
+        H0 + 1,
+        parent.clone(),
+        d2.clone(),
+        vec![vec![0x71], vec![0x72]],
+    );
+    let cand_nns = vec![synthetic_claim_candidate("nns.nock", OWNER, 0x71, treasury_nns)];
+    apply_prefetched_scan_blocks_with_candidates(&state, vec![b2], vec![cand_nns])
+        .await
+        .expect("apply block 2")
+        .expect("scan outcome");
+    parent = peek_last_proved_digest(&state).await;
+
+    let d3 = digest40(0xD3);
+    let b3 = scan_block_fetch_stub(H0 + 2, parent, d3, vec![vec![0x81]]);
+    let second = "nna.nock";
+    let fee2 = fee_for_name(second);
+    let cand_nc = vec![synthetic_claim_candidate(second, OWNER, 0x81, fee2)];
+    apply_prefetched_scan_blocks_with_candidates(&state, vec![b3], vec![cand_nc])
+        .await
+        .expect("apply block 3")
+        .expect("scan outcome");
+
+    let body_nns = get_accumulator_json(state.clone(), "nns.nock", "seq_nns").await;
+    assert_eq!(body_nns["name"], "nns.nock");
+    let body_nc = get_accumulator_json(state.clone(), second, "seq_second").await;
+    assert_eq!(body_nc["name"], second);
 }

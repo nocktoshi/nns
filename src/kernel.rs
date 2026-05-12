@@ -1185,7 +1185,7 @@ pub fn build_owner_peek(name: &str) -> NounSlab {
 /// Build a `/accumulator/<name>` peek path slab.
 ///
 /// Kernel response: `[~ ~ (unit nns-accumulator-entry)]` where
-/// `nns-accumulator-entry = [owner=@t tx-hash=@ux claim-height=@ud block-digest=@ux]`.
+/// `nns-accumulator-entry = [name=@t owner=@t tx-hash=@ux claim-height=@ud block-digest=@ux]`.
 pub fn build_accumulator_peek(name: &str) -> NounSlab {
     name_peek("accumulator", name)
 }
@@ -1508,6 +1508,7 @@ pub struct NameEntry {
 /// A row in the Path Y accumulator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccumulatorEntry {
+    pub name: String,
     pub owner: String,
     pub tx_hash: Vec<u8>,
     pub claim_height: u64,
@@ -1528,16 +1529,21 @@ pub fn decode_accumulator_entry(result: &NounSlab) -> Result<Option<AccumulatorE
     let entry_cell = entry
         .as_cell()
         .map_err(|_| "accumulator: entry not a cell".to_string())?;
-    let owner = atom_to_cord(entry_cell.head())?;
+    let name = atom_to_cord(entry_cell.head())?;
     let rest = entry_cell
         .tail()
         .as_cell()
         .map_err(|_| "accumulator: entry tail not a cell".to_string())?;
-    let tx_hash = atom_to_le_bytes(rest.head())?;
+    let owner = atom_to_cord(rest.head())?;
     let rest = rest
         .tail()
         .as_cell()
         .map_err(|_| "accumulator: entry tail2 not a cell".to_string())?;
+    let tx_hash = atom_to_le_bytes(rest.head())?;
+    let rest = rest
+        .tail()
+        .as_cell()
+        .map_err(|_| "accumulator: entry tail3 not a cell".to_string())?;
     let claim_height = rest
         .head()
         .as_atom()
@@ -1546,6 +1552,7 @@ pub fn decode_accumulator_entry(result: &NounSlab) -> Result<Option<AccumulatorE
         .map_err(|_| "accumulator: claim_height overflows u64".to_string())?;
     let block_digest = atom_to_le_bytes(rest.tail())?;
     Ok(Some(AccumulatorEntry {
+        name,
         owner,
         tx_hash,
         claim_height,

@@ -250,6 +250,10 @@
       ::  Wallet reads product and proof — no re-running the
       ::  validator. Single-artifact trust.
       ::
+      ::  `name` is the UTF-8 cord (`@t`) from the claim bundle. The Path Y
+      ::  z-map does **not** key rows by raw `name` — see `++name-key:na`
+      ::  (Tip5 5-limb digest, same ``based`` limb layout as v1 `tx-id`).
+      ::
       $:  %prove-claim-in-stark
           name=@t
           owner=@t
@@ -707,7 +711,8 @@
         :_  state
         ~[[%accumulator-snapshot-verify-result %.n]]
       =/  entry=nns-accumulator-entry:na
-        :*  owner=owner.u.act
+        :*  name=name.u.act
+            owner=owner.u.act
             tx-hash=tx-hash.u.act
             claim-height=claim-height.u.act
             block-digest=block-digest.u.act
