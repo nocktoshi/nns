@@ -14,7 +14,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
-    let cli = boot::default_boot_cli(false);
+    let mut cli = boot::default_boot_cli(false);
+    // Match integration tests: prover hot state + `%scan-block` Tip5 paths
+    // use more Nock stack than the default CLI `Normal` size.
+    cli.stack_size = nockapp::kernel::boot::NockStackSize::Large;
     boot::init_default_tracing(&cli);
 
     // --- Load settlement + NNS config from vesl.toml ---

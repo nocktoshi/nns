@@ -580,29 +580,37 @@
       ?.  =(height.c want-height)
         :_  state
         ~[[%scan-block-error 'height-not-successor']]
-      ::  Claim-scanner + accumulator Tip5 root. Page summary uses a flat
-      ::  tx-id list (see `has-tx-in-page:np`) — no `z-silt` / `gor-tip`
-      ::  path (jet edge case with 3+ 40-byte atoms in z-sets).
+      ::  Claim-scanner then accumulator Tip5 root (split `mule`s so a
+      ::  trap in either phase surfaces a distinct `%scan-block-error`
+      ::  tag — see `claim-scanner-trap` vs `accumulator-root-trap`).
+      ::  Page summary uses a flat tx-id list (see `has-tx-in-page:np`)
+      ::  — no `z-silt` / `gor-tip` path (jet edge case with 3+ 40-byte
+      ::  atoms in z-sets).
       ::
-      =/  scan-run
+      =/  pag=nns-page-summary:np  [page-digest.c page-tx-ids.c]
+      =/  acc-run
         %-  mule
         |.
-        =/  pag=nns-page-summary:np  [page-digest.c page-tx-ids.c]
-        =/  new-acc=nns-accumulator:na
-          (claim-scanner:np accumulator.state pag height.c candidates.c)
-        =/  acc-root=@  (root-atom:na new-acc)
-        [new-acc acc-root]
-      ?.  ?=(%& -.scan-run)
-        ::  Trap tang is `+.scan-run`; hull sees `%scan-block-error` below.
-        ~>  %slog.[2 'nns: %scan-block evaluation trapped (see claim-scanner-bail)']
+        (claim-scanner:np accumulator.state pag height.c candidates.c)
+      ?.  ?=(%& -.acc-run)
+        ~>  %slog.[2 'nns: %scan-block claim-scanner trapped']
         :_  state
-        ~[[%scan-block-error 'claim-scanner-bail']]
-      =/  pr  p.scan-run
-      =.  accumulator.state  -.pr
+        ~[[%scan-block-error 'claim-scanner-trap']]
+      =/  new-acc=nns-accumulator:na  p.acc-run
+      =/  root-run
+        %-  mule
+        |.
+        (root-atom:na new-acc)
+      ?.  ?=(%& -.root-run)
+        ~>  %slog.[2 'nns: %scan-block accumulator root-atom trapped']
+        :_  state
+        ~[[%scan-block-error 'accumulator-root-trap']]
+      =/  acc-root=@  p.root-run
+      =.  accumulator.state  new-acc
       =.  last-proved-height.state  height.c
       =.  last-proved-digest.state  page-digest.c
       :_  state
-      ~[[%scan-block-done height.c page-digest.c +.pr]]
+      ~[[%scan-block-done height.c page-digest.c acc-root]]
       ::
         ::  Sanity-check arm: prove `[42 [0 1]]` then verify. Emits
         ::  [%prove-identity-result ok=?] so the test can confirm the
