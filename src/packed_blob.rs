@@ -35,7 +35,7 @@ fn decode_len_prefixed_blob(belts: &[Belt]) -> Option<Vec<u8>> {
 }
 
 /// Decode wallet-style note-data value: JAM → belt list → inner payload bytes.
-pub(crate) fn unpack_wallet_blob_jam(jam: &[u8]) -> Result<Vec<u8>, String> {
+pub fn unpack_wallet_blob_jam(jam: &[u8]) -> Result<Vec<u8>, String> {
     let mut stack = NockStack::new(NOCK_STACK_SIZE, 0);
     let noun = Noun::cue_bytes_slice(&mut stack, jam)
         .map_err(|e| format!("cue blob jam: {e}"))?;

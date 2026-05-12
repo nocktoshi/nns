@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use nockapp::wire::{SystemWire, Wire};
@@ -523,13 +524,62 @@ fn extract_claim_candidates_from_transaction(
         let Ok(note) = ClaimNoteV1::from_note_data(&note_data) else {
             continue;
         };
-        let tx_hash = base58_hash_to_atom_bytes(&note.tx_hash)?;
-        let actual_tx_hash = base58_hash_to_atom_bytes(&details.tx_id)?;
-        let witness = claim_witness_from_transaction(details, &actual_tx_hash, &note.owner);
+        let tx_id_expected = details.tx_id.trim();
+        let note_tx = note.tx_hash.trim();
+        let effective_tx_id = if note_tx.is_empty() {
+            tx_id_expected
+        } else {
+            note_tx
+        };
+        if effective_tx_id != tx_id_expected {
+            tracing::warn!(
+                tx_id = %tx_id_expected,
+                tx_hash_in_blob = %note_tx,
+                name = %note.name,
+                "nns: claim blob tx_hash does not match this transaction id; \
+                 skipping (kernel matches-tx-id)"
+            );
+            continue;
+        }
+        let tx_hash = base58_hash_to_atom_bytes(effective_tx_id)?;
+        let actual_tx_hash = base58_hash_to_atom_bytes(tx_id_expected)?;
+        let Some(owner) = infer_claim_owner_for_candidate(details, &note) else {
+            tracing::warn!(
+                tx_id = %tx_id_expected,
+                name = %note.name,
+                owner_in_blob = %note.owner,
+                input_count = details.inputs.len(),
+                "nns: cannot infer claim owner (path-style blob needs a unique signer pubkey or \
+                 legacy spent-note name); skipping (kernel sender-is-owner)"
+            );
+            continue;
+        };
+        let Some(witness) = claim_witness_from_transaction(details, &actual_tx_hash, &owner) else {
+            tracing::warn!(
+                tx_id = %tx_id_expected,
+                name = %note.name,
+                owner_in_blob = %owner,
+                input_count = details.inputs.len(),
+                "nns: claim owner is not a tx signer pubkey (GetTransactionDetails \
+                 `signer_pubkey_b58`) nor a legacy spent-note name match; skipping (kernel sender-is-owner)"
+            );
+            continue;
+        };
+        let min_fee = fee_for_name(&note.name);
+        if witness.treasury_amount < min_fee {
+            tracing::warn!(
+                tx_id = %details.tx_id.trim(),
+                name = %note.name,
+                treasury_nicks = witness.treasury_amount,
+                min_fee_nicks = min_fee,
+                "nns: claim candidate treasury sum below fee schedule (lock decode / \
+                 output filter may not match this tx; kernel would reject witness-underpaid)"
+            );
+        }
         candidates.push(ClaimCandidate {
-            fee: fee_for_name(&note.name),
+            fee: min_fee,
             name: note.name,
-            owner: note.owner,
+            owner,
             tx_hash,
             witness,
         });
@@ -537,24 +587,86 @@ fn extract_claim_candidates_from_transaction(
     Ok(candidates)
 }
 
+/// When the on-chain `blob` is a **path** (`nns/v1/claim/<name>.nock`), `owner` is empty in
+/// [`ClaimNoteV1`]. Resolve it from `signer_pubkey_b58` (unique across inputs), or legacy
+/// distinct `note_name_b58` when signer lists are empty.
+fn infer_claim_owner_for_candidate(details: &TransactionDetails, note: &ClaimNoteV1) -> Option<String> {
+    let o = note.owner.trim();
+    if !o.is_empty() {
+        return Some(o.to_string());
+    }
+    let signers: HashSet<&str> = details
+        .inputs
+        .iter()
+        .flat_map(|i| i.signer_pubkey_b58.iter().map(|s| s.as_str()))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if signers.len() == 1 {
+        return Some(signers.into_iter().next()?.to_string());
+    }
+    if !signers.is_empty() {
+        return None;
+    }
+    let names: HashSet<&str> = details
+        .inputs
+        .iter()
+        .map(|i| i.note_name_b58.as_str().trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if names.len() == 1 {
+        return Some(names.into_iter().next()?.to_string());
+    }
+    None
+}
+
+/// Build Level C-A witness fields from RPC `TransactionDetails`.
+///
+/// `claim.owner` must identify the **signer**: it is checked against every input's
+/// `signer_pubkey_b58` (Schnorr pubkey base58 from the v1 spend witness, populated by
+/// nockchain `GetTransactionDetails`). That matches Nockblocks-style `pkhSignature.pubkey`.
+///
+/// If the chain node has not been upgraded and all `signer_pubkey_b58` lists are empty,
+/// we fall back to the legacy rule: `owner` must equal some input's `note_name_b58`
+/// (spent-note name), which older NNS docs assumed.
+///
+/// `spender_pkh` in the witness is always the UTF-8 bytes of `owner`, which is what the
+/// kernel's `sender-is-owner` predicate compares to `claim.owner` as `@`.
 fn claim_witness_from_transaction(
     details: &TransactionDetails,
     tx_hash: &[u8],
     owner: &str,
-) -> ClaimWitness {
-    let spender = details
+) -> Option<ClaimWitness> {
+    let owner = owner.trim();
+    if owner.is_empty() {
+        return None;
+    }
+
+    let signer_set: HashSet<&str> = details
         .inputs
         .iter()
-        .find(|input| input.note_name_b58.trim() == owner)
-        .or_else(|| details.inputs.first())
-        .map(|input| input.note_name_b58.trim())
-        .unwrap_or_default();
-    ClaimWitness {
+        .flat_map(|i| i.signer_pubkey_b58.iter().map(|s| s.as_str()))
+        .collect();
+
+    let owner_ok = if signer_set.is_empty() {
+        details
+            .inputs
+            .iter()
+            .any(|i| i.note_name_b58.trim() == owner)
+    } else {
+        signer_set.contains(owner)
+    };
+
+    if !owner_ok {
+        return None;
+    }
+
+    Some(ClaimWitness {
         tx_id: tx_hash.to_vec(),
-        spender_pkh: spender.as_bytes().to_vec(),
+        spender_pkh: owner.as_bytes().to_vec(),
         treasury_amount: sum_treasury_outputs_v1(details),
         output_lock_root: TREASURY_LOCK_ROOT_B58.to_string(),
-    }
+    })
 }
 
 fn note_data_from_proto(data: &PbNoteData) -> NoteData {

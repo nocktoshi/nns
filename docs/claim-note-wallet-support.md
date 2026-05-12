@@ -7,7 +7,7 @@ Path Y registers names **only** when a valid claim appears on a **transaction ou
 Generic wallets today often expose **amount + recipient** flows only. NNS requires **NoteData** with the **`blob`** key encoding described below (matches `wallet-tx-builder`). That is still a **non-trivial** wallet product change for many vendors:
 
 - The claim must sit on an **output** of the registering transaction; the follower walks `details.outputs` only.
-- **`owner`** in the claim tuple should match how the hull builds the payment witness (see `claim_witness_from_transaction` in `src/chain_follower.rs`): typically the spending input’s `note_name_b58` equals `owner` for correct Level C-A checks.
+- **`owner`** in the claim tuple must match a **tx signer** (preferred): each `GetTransactionDetails` input carries **`signer_pubkey_b58`** (Schnorr pubkey base58 from the v1 spend witness, same idea as Nockblocks `pkhSignature.pubkey`); the follower requires `owner` to appear in that union. If the node is not upgraded and those lists are all empty, the follower falls back to **`note_name_b58 == owner`** on some input (spent-note name).
 
 Until wallets ship first-class NoteData UX, operators rely on **nockchain-wallet** / **custom tx builders** aligned with upstream packing (`encode_blob_belts` → jam).
 

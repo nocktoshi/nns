@@ -7,7 +7,10 @@
 1. **RPC / block explorer surfaces must return `note_data` on v1 outputs**  
    The follower (`src/chain_follower.rs`) only learns about claims from `output.note_data`. If `GetBlockDetails` (or whatever your build wires) omits it, `%scan-block` never sees `nns/v1/claim` payloads.
 
-2. **A way to put that NoteData on-chain**  
+2. **`GetTransactionDetails` must expose tx signers on each input**  
+   Path Y verifies `claim.owner` against **`TransactionInput.signer_pubkey_b58`** (Schnorr pubkey base58 from each v1 spend’s witness / legacy signature map), not against the spent note’s `note_name_b58`. If this field is missing on all inputs, the follower falls back to the legacy `note_name_b58 == owner` rule only when every `signer_pubkey_b58` list is empty (pre-upgrade nodes).
+
+3. **A way to put that NoteData on-chain**  
    Wallets must be able to attach the keyed blobs NNS defines (`docs/claim-note-wallet-support.md`). Upstream direction: **[nockchain#85](https://github.com/nockchain/nockchain/pull/85)** (`create-tx --memo-data` — API still evolving in review).
 
 ## Hoon / `hoonc`

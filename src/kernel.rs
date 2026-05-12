@@ -526,8 +526,10 @@ pub struct ClaimBundle {
 pub struct ClaimWitness {
     /// Must equal the bundle's `tx_hash`.
     pub tx_id: Vec<u8>,
-    /// Paying signer's pkh (atom form). Must equal `claim.owner`
-    /// at the kernel's atomic-equality representation.
+    /// Paying identity as UTF-8 bytes for the kernel `sender-is-owner` check.
+    /// Must equal `claim.owner` as an atom; the follower sets this from the claim
+    /// **after** verifying `owner` appears in the tx's `signer_pubkey_b58` list
+    /// (or legacy: spent-note `note_name_b58`).
     pub spender_pkh: Vec<u8>,
     /// Total nicks paid to the treasury address across all
     /// outputs. Must be `>= fee-for-name(claim.name)`.
