@@ -19,7 +19,7 @@ install-rust: install-bin-lib install-wrappers
 
 kernel-jam:
 	bash scripts/setup-hoon-tree.sh
-	hoonc --new hoon/app/app.hoon hoon/
+	TRACY_NO_INVARIANT_CHECK=1 hoonc --new hoon/app/app.hoon hoon/
 	install -d "$(DESTDIR)$(LIBDIR)"
 	install -m 644 "out.jam" "$(DESTDIR)$(KERNEL)"
 
