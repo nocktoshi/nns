@@ -61,6 +61,7 @@ async fn boot_nns_with_prover() -> (tempfile::TempDir, nns_vesl::state::SharedSt
     let mut cli = boot::default_boot_cli(true);
     cli.stack_size = NockStackSize::Large;
     TRACING_INIT.call_once(|| {
+        nns_vesl::prepare_tracy_for_host_cpu();
         let _ = boot::init_default_tracing(&cli);
     });
     let prover_hot_state = zkvm_jetpack::hot::produce_prover_hot_state();

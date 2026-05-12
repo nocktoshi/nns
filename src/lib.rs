@@ -15,6 +15,14 @@
 //! genesis uses [`chain::NNS_GENESIS_HEIGHT`](crate::chain::NNS_GENESIS_HEIGHT),
 //! mirroring `++nns-genesis-height` in the Hoon kernel.
 
+/// Some `nockapp` builds link optional `tracing-tracy`, which aborts on CPUs without an
+/// invariant TSC unless opted out. Call before [`nockapp::kernel::boot::init_default_tracing`].
+pub fn prepare_tracy_for_host_cpu() {
+    if std::env::var_os("TRACY_NO_INVARIANT_CHECK").is_none() {
+        std::env::set_var("TRACY_NO_INVARIANT_CHECK", "1");
+    }
+}
+
 pub mod api;
 pub mod chain;
 pub mod chain_follower;

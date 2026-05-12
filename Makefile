@@ -29,7 +29,7 @@ install-bin-lib:
 	install -m 755 "target/release/nns-vesl" "$(DESTDIR)$(BIN)"
 
 install-wrappers:
-	printf '#!/usr/bin/env sh\nexport NNS_KERNEL_JAM=%s/out.jam\nexec %s/nns-vesl "$$@"\n' \
+	printf '#!/usr/bin/env sh\nexport TRACY_NO_INVARIANT_CHECK=1\nexport NNS_KERNEL_JAM=%s/out.jam\nexec %s/nns-vesl "$$@"\n' \
 	  "$(LIBDIR)" "$(LIBDIR)" > "$(DESTDIR)$(WRAPPER)"
 	chmod 755 "$(DESTDIR)$(WRAPPER)"
 	ln -sf "nns" "$(DESTDIR)$(ALT_WRAPPER)"

@@ -10,6 +10,8 @@ use nockapp::NockApp;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    nns_vesl::prepare_tracy_for_host_cpu();
+
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     let cli = boot::default_boot_cli(false);

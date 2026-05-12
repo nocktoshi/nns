@@ -66,6 +66,7 @@ pub fn log_predicate_api(case_id: &str, operation: &str, response: &str) {
 
 fn init_tracing_once() {
     TRACING_INIT.call_once(|| {
+        nns_vesl::prepare_tracy_for_host_cpu();
         let cli = boot::default_boot_cli(true);
         boot::init_default_tracing(&cli);
     });

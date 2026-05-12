@@ -213,6 +213,7 @@ fn grpcurl_fixture_claim_decodes_and_matches_tx_id() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn grpcurl_fixture_accumulator_inserts_claimed_name() {
     INIT_TRACING.call_once(|| {
+        nns_vesl::prepare_tracy_for_host_cpu();
         let cli = boot::default_boot_cli(true);
         boot::init_default_tracing(&cli);
     });

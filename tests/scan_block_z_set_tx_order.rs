@@ -84,6 +84,7 @@ async fn setup() -> (tempfile::TempDir, nns_vesl::SharedState) {
     let mut cli = boot::default_boot_cli(true);
     cli.stack_size = NockStackSize::Large;
     INIT_TRACING.call_once(|| {
+        nns_vesl::prepare_tracy_for_host_cpu();
         let trace_cli = boot::default_boot_cli(true);
         boot::init_default_tracing(&trace_cli);
     });
