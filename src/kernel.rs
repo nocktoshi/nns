@@ -341,42 +341,17 @@ pub fn verify_accumulator_snapshot_blocking(
         ))
 }
 
-/// One entry in the `%advance-tip` header list.
+/// One Nockchain block header triple for read-only kernel checks and
+/// claim bundles (`%verify-chain-link`, in-gate `chain-links-to`).
 ///
 /// `digest` and `parent` are raw 40-byte Tip5 hashes (5 × 8-byte
 /// Goldilocks field elements, LE-packed). `height` is the Nockchain
-/// `page-number`. The kernel walks these oldest-first, enforcing
-/// `header[n].parent == header[n-1].digest` and monotonic heights.
+/// `page-number`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnchorHeader {
     pub digest: Vec<u8>,
     pub height: u64,
     pub parent: Vec<u8>,
-}
-
-/// Build a `[%advance-tip headers=(list anchor-header)]` poke slab.
-///
-/// `headers` MUST be oldest-first (same convention as the follower
-/// receives blocks from Nockchain). On success the kernel emits
-/// `[%anchor-advanced tip-digest=@ux tip-height=@ud count=@ud]`; on
-/// validation failure it emits `[%anchor-error msg=@t]` and does NOT
-/// mutate state.
-pub fn build_advance_tip_poke(headers: &[AnchorHeader]) -> NounSlab {
-    let mut slab = NounSlab::new();
-    let tag = make_tag_in(&mut slab, "advance-tip");
-
-    let mut list_noun = D(0);
-    for h in headers.iter().rev() {
-        let digest = make_atom_in(&mut slab, &h.digest);
-        let parent = make_atom_in(&mut slab, &h.parent);
-        let height = atom_from_u64(&mut slab, h.height);
-        let cell = T(&mut slab, &[digest, height, parent]);
-        list_noun = T(&mut slab, &[cell, list_noun]);
-    }
-
-    let poke = T(&mut slab, &[tag, list_noun]);
-    slab.set_root(poke);
-    slab
 }
 
 /// Build a `[%verify-chain-link claim-digest=@ux headers=(list anchor-header) anchored-tip=@ux]`

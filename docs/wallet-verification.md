@@ -91,3 +91,25 @@ echo '{
 
 Rebuild **`out.jam`** after pulling Hoon changes for **`%accumulator-jam`** peek
 and **`%verify-accumulator-snapshot`** cause.
+
+
+Example
+```
+curl -s 'http://localhost:3000/accumulator/nns.nock?wallet_export=true' | jq > bundle.json
+```
+
+```
+cargo +nightly run -p nns-vesl --bin light_verify -- --checkpoint-height "$(jq -r '.last_proved_height' bundle.json)" --checkpoint-digest-hex "$(jq -r '.last_proved_digest // .last_proved_digest_hex' bundle.json)" --kernel-jam out.jam --allow-empty-recursive-proof <<< "$(jq '{name, value:{owner:.value.owner,tx_hash_hex:(.value.tx_hash_hex//.value.tx_hash),claim_height:.value.claim_height,block_digest_hex:(.value.block_digest_hex//.value.block_digest)},last_proved_height,last_proved_digest_hex:(.last_proved_digest_hex//.last_proved_digest),accumulator_root_hex:(.accumulator_root_hex//.accumulator_root),recursive_proof_hex:"",accumulator_snapshot_jam_hex:(.accumulator_snapshot_jam_hex//.accumulator_snapshot_hex//""),headers_to_checkpoint:(.headers_to_checkpoint//[])}' bundle.json)"
+```
+```
+     Running `target/debug/light_verify --checkpoint-height 65495 --checkpoint-digest-hex 1c42ffee8b2469daf9741d0ccb67ba93a5613718cfee14d0007023130ba49d5b80954a07480a4aae --kernel-jam out.jam --allow-empty-recursive-proof`
+verified: nns.nock
+  last_proved_height: 65495
+  checkpoint: height=65495 (1c42f……)
+  value: present
+  mode: partial Y2 relax (empty_recursive=true missing_z_in=false)
+checks:
+  [SKIP] recursive Vesl STARK (empty / absent proof)
+  [PASS] z-map row (%verify-accumulator-snapshot)
+  [PASS] header chain to checkpoint
+```

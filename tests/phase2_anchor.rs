@@ -1,6 +1,5 @@
 //! Path Y2 integration tests — `%scan-block` chain cursor.
 //!
-//! Replaces the old Phase 2 `%advance-tip` suite (removed in Path Y).
 //! Exercises parent linkage, strict height+1 monotonicity, and
 //! `/scan-state` peeks against a booted kernel (no HTTP).
 

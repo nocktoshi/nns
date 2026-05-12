@@ -29,10 +29,10 @@ pub struct HullState {
 /// follower stuck?" with a single HTTP call.
 ///
 /// Not persisted. Resets on process restart — which is the right
-/// behaviour, because staleness of a "last advance at T" timestamp
-/// across restarts would be misleading. The authoritative kernel
-/// anchor is still in kernel state; this only tracks what the
-/// follower process observed during its lifetime.
+/// behaviour, because staleness of a "last scan batch at T" timestamp
+/// across restarts would be misleading. The authoritative scan cursor
+/// lives in kernel state; this only tracks what the follower process
+/// observed during its lifetime.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct FollowerObservability {
     /// Most recent chain-tip height the follower learned from the
@@ -41,13 +41,13 @@ pub struct FollowerObservability {
     pub last_chain_tip_height: Option<u64>,
     /// Epoch-millis timestamp of [`last_chain_tip_height`].
     pub last_chain_tip_observed_at_epoch_ms: Option<u64>,
-    /// Epoch-millis timestamp of the most recent successful
-    /// `%advance-tip` poke. `None` until the first advance completes.
+    /// Epoch-millis timestamp of the most recent successful `%scan-block`
+    /// batch recorded by the follower. `None` until the first such batch
+    /// completes.
     pub last_advance_at_epoch_ms: Option<u64>,
-    /// Tip height reached by the last successful advance.
+    /// Scan cursor height after that batch (`last-proved-height` in the kernel).
     pub last_advance_tip_height: Option<u64>,
-    /// Number of headers ingested by the last successful advance
-    /// (as reported by the kernel's `%anchor-advanced` effect).
+    /// Number of blocks applied in that batch.
     pub last_advance_count: Option<u64>,
     /// Most recent follower-tick failure message. Cleared on the
     /// next successful tick so stale errors don't confuse operators.
@@ -55,9 +55,9 @@ pub struct FollowerObservability {
     /// Epoch-millis timestamp of [`last_error`].
     pub last_error_at_epoch_ms: Option<u64>,
     /// Which follower phase the last error came from. One of
-    /// `"anchor_peek"`, `"plan"`, `"header_fetch"`, `"advance_poke"`,
-    /// or `"claim_tick"`. Strongly typed as a static string so log
-    /// aggregators can histogram on it.
+    /// `"scan_block"`, `"scan_peek"`, `"plan"`, or `"scan_poke"`.
+    /// Strongly typed as a static string so log aggregators can
+    /// histogram on it.
     pub last_error_phase: Option<&'static str>,
 }
 

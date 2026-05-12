@@ -1,9 +1,7 @@
 //! Path Y2 two-kernel scan cursor regression test.
 //!
-//! Supersedes the Phase 7 two-server `light_verify` freshness scenario
-//! (`%advance-tip` + `/anchor` were removed). The same idea — two nodes
-//! can diverge in what chain prefix they have scanned — is expressed
-//! directly via `/scan-state` peeks after `%scan-block` pokes.
+//! Two nodes can diverge in what chain prefix they have scanned; this
+//! is checked directly via `/scan-state` peeks after `%scan-block` pokes.
 
 use std::sync::Arc;
 

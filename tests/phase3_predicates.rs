@@ -436,11 +436,6 @@ async fn validate_claim_short_circuits_on_first_error() {
     );
 }
 
-// Path Y2 removed `%advance-tip` and `%prove-claim` (Phase 7 anchor
-// binding on prove). Stale/fork resistance for wallets moves to the
-// recursive-proof + pinned-checkpoint model (plan Y4).
-
-// ----------------------------------------------------------------------
 // Level C-A: payment-semantic witness predicates
 // ----------------------------------------------------------------------
 //

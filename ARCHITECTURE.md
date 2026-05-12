@@ -1583,8 +1583,7 @@ Rules:
 - Intermediate headers discarded.
 - `%set-payment-address` freezes after first claim.
 ### Rust wiring
-Builders and decoders:
-- `build_advance_tip_poke`
+Builders and decoders (Path Y supersedes slim-anchor `%advance-tip`; historical list retained for context):
 - `build_set_payment_address_poke`
 - `build_anchor_peek`
 - `build_payment_address_peek`
@@ -1614,9 +1613,7 @@ In `src/chain.rs`:
 - `fetch_block_proof_bytes`
 - `fetch_transaction_details`
 - `fetch_page_for_tx`
-- `fetch_header_chain`
 - `fetch_current_tip_height`
-- `plan_anchor_advance`
 Conversions:
 - `hash_to_atom_bytes`
 - `atom_bytes_to_hash`
