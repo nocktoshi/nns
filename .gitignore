@@ -2,4 +2,10 @@ target/
 .nns-data/
 .DS_Store
 nns.jam
-hoon/packages
+
+# Hoon libraries (managed by nockup)
+/hoon/packages/
+/hoon/common/
+/hoon/dat/
+/hoon/jams/
+/hoon/lib/
