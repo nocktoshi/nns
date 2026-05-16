@@ -11,11 +11,11 @@ use tower::util::ServiceExt;
 use vesl_core::SettlementConfig;
 
 fn kernel_jam() -> Vec<u8> {
-    let path = std::env::var("NNS_KERNEL_JAM").unwrap_or_else(|_| "out.jam".to_string());
+    let path = std::env::var("NNS_KERNEL_JAM").unwrap_or_else(|_| "nns.jam".to_string());
     match std::fs::read(&path) {
         Ok(b) => b,
-        Err(_) => std::fs::read("../out.jam")
-            .unwrap_or_else(|e| panic!("could not read kernel jam at {path} or ../out.jam: {e}")),
+        Err(_) => std::fs::read("../nns.jam")
+            .unwrap_or_else(|e| panic!("could not read kernel jam at {path} or ../nns.jam: {e}")),
     }
 }
 

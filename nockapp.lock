@@ -1,0 +1,19 @@
+[[package]]
+name = "vesl-lib"
+version = "commit:dc9382cd2110cb39561bf4abdc47d7d7f88029b5"
+
+[package.source]
+type = "git"
+url = "https://github.com/nocktoshi/vesl-core.git"
+commit = "dc9382cd2110cb39561bf4abdc47d7d7f88029b5"
+path = "protocol/lib"
+
+[[package]]
+name = "nockchain-hoon"
+version = "commit:ff6dd2d64661f6607485feb9373cf705db86edce"
+
+[package.source]
+type = "git"
+url = "https://github.com/nockchain/nockchain.git"
+commit = "ff6dd2d64661f6607485feb9373cf705db86edce"
+path = "hoon"

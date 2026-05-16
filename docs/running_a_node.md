@@ -12,11 +12,7 @@ For the full architecture and design rationale, see
 ## Quick Start
 
 ```bash
-# clone vesl
-git clone https://github.com/zkvesl/vesl-core.git
-cd vesl-core && git checkout dev
-cd ~
-# clone nns repo
+# clone nns repo (Hoon deps fetched by nockup — see nockapp.toml)
 git clone https://github.com/nocktoshi/nns-vesl.git
 cd nns-vesl
 make install                                  # builds kernel + nns binary
@@ -50,23 +46,31 @@ rustup toolchain list | grep nightly
 ## 2. Install
 
 ```bash
-git clone https://github.com/zkvesl/vesl-core.git
-cd vesl-core && git checkout dev
-cd ~
 git clone https://github.com/nocktoshi/nns-vesl.git
 cd nns-vesl
 make install
 ```
 
-What `make install` does:
+What `make install` does (see `Makefile`):
 
-- Runs `scripts/setup-hoon-tree.sh` — symlinks Nockchain + Vesl Hoon
-libs into `hoon/common/` and `hoon/lib/`.
-- Compiles the kernel: `hoonc --new hoon/app/app.hoon hoon/` → produces
-`out.jam` (~18 MB).
-- Builds the Rust binary: `cargo +nightly build --release`.
-- Installs `nns` and `light_verify` to `$HOME/.local/bin` (updates
-`$PATH` in `~/.zshrc` / `~/.bashrc` if needed).
+- **`install-kernel`**: `nockup package install` (populates `hoon/packages/`
+  from pins in `nockapp.toml` — Vesl
+  [nocktoshi/vesl-core](https://github.com/nocktoshi/vesl-core) @ `dc9382cd…`,
+  Nockchain @ `ff6dd2d…`), then `make sync-hoon-from-nockup` **rsync**s those
+  caches into `hoon/{common,dat,jams,lib}` (real files, not symlinks), runs
+  `hoonc --new hoon/app/app.hoon hoon/` → `nns.jam` in the repo root, installs
+  it to `~/.local/lib/nns-vesl/nns.jam`, and removes the materialized
+  `hoon/{common,dat,jams,lib}` tree (sources remain under `hoon/packages/`).
+- **`install-bin-lib`**: `cargo +nightly build --release` →
+  `~/.local/lib/nns-vesl/nns-vesl`.
+- **`install-wrappers`**: `nns` wrapper (sets `NNS_KERNEL_JAM` to the installed
+  jam) plus `nns-vesl` symlink in `~/.local/bin`; appends `~/.local/bin` to
+  `PATH` in `~/.zshrc` when missing.
+
+Hoon-only rebuild after editing `hoon/app/`: `make install-kernel`. Rust-only:
+`make install-rust` (reuses an existing `./nns.jam`). **`light_verify`** is not
+installed by `make install` — run `cargo +nightly run --bin light_verify -- …`
+(see [`docs/wallet-verification.md`](wallet-verification.md)).
 
 Verify:
 
@@ -78,7 +82,7 @@ nns --help             # (passes through to the underlying cli)
 ## 3. Configure
 
 ```bash
-nano vesl.toml
+nano nns.toml
 ```
 
 ### Local mode (default)
@@ -122,7 +126,7 @@ With these lines the follower starts scanning blocks into the kernel
 **63000** (NNS did not exist on earlier Nockchain blocks). That height is a
 **protocol constant** defined as `++nns-genesis-height` in `hoon/app/app.hoon`
 and mirrored in Rust as `NNS_GENESIS_HEIGHT`.
-Rebuild `out.jam` if you change the Hoon constant. Check `curl -s localhost:3000/status | jq .follower`
+Rebuild the kernel (`make install-kernel`) if you change the Hoon constant. Check `curl -s localhost:3000/status | jq .follower`
 after ~30 s to confirm `chain_tip_height` is populated.
 
 ### Nockchain checkout: NoteData on outputs + wallet tooling
@@ -171,9 +175,9 @@ Runtime env vars the binary respects:
 | ------------------ | ----------- | ----------------------------------- |
 | `BIND_ADDR`        | `127.0.0.1` | interface to bind                   |
 | `API_PORT`         | `3000`      | HTTP port                           |
-| `VESL_TOML`        | `vesl.toml` | config file path                    |
+| `NNS_CONFIG`        | `nns.toml` | config file path                    |
 | `NNS_DATA_DIR`     | `.`         | where `.nns-data/` is created       |
-| `NNS_KERNEL_JAM`   | `out.jam`   | kernel jam path                     |
+| `NNS_KERNEL_JAM`   | `~/.local/lib/nns-vesl/nns.jam` (set by `nns` wrapper) | kernel jam path |
 | `RUST_LOG`         | `info`      | log verbosity — see [§ Logs](#logs) |
 | `NNS_ENABLE_ADMIN` | unset       | enable admin routes (debug only)    |
 
@@ -287,7 +291,7 @@ watch -n 2 'curl -s http://127.0.0.1:3000/status | jq .scan_state'
 
 Common causes of no scan progress:
 
-- `**local mode**` — `settlement_mode = "local"` in vesl.toml. Set to `"chain"`.
+- `**local mode**` — `settlement_mode = "local"` in nns.toml. Set to `"chain"`.
 - `**endpoint missing**` — `chain_endpoint` not set. Add it.
 - `**within finality depth**` — chain tip < NNS scan height + `finality_depth` (default 10). Wait for chain to advance.
 
@@ -342,7 +346,7 @@ Backing up:
 - **State dir** — the whole `.nns-data/` atomically (the kernel fsyncs
 internally on `persist_all`; copying mid-run risks a partial
 checkpoint but not corruption of older ones).
-- `**vesl.toml`** — required to re-boot against the same treasury.
+- `**nns.toml`** — required to re-boot against the same treasury.
 
 Restoring: drop the `.nns-data/` back in place and start `nns`. The
 kernel prints `Successfully imported kernel state from: ...` when it
@@ -369,18 +373,11 @@ nest-fail
 /lib/vesl-stark-verifier.hoon::[541 27].[541 35]
 ```
 
-that used to mean `$VESL_HOME` was checked out to a commit whose
-`vesl-stark-verifier.hoon` had drifted from what NNS expected. It is
-now auto-resolved: `vesl-stark-verifier.hoon` is **vendored** (checked
-into this repo at `hoon/lib/vesl-stark-verifier.hoon` rather than
-symlinked). `scripts/setup-hoon-tree.sh` leaves the vendored file in
-place even when you re-run it. The header banner at the top of the
-file documents the upstream divergence and the refresh procedure for
-the day the patch lands in vesl main.
-
-If you still see the nest-fail after pulling NNS, your checkout is
-missing the vendored copy — `git status hoon/lib/vesl-stark-verifier.hoon`
-and `git checkout` it.
+that usually means the materialized `hoon/lib/` tree is stale or from the
+wrong checkout. Re-run `nockup package install && make sync-hoon-from-nockup`
+so the five Vesl libs under `hoon/packages/vesl-lib--commit-*` match the
+`vesl-lib` pin in `nockapp.toml` (currently `dc9382cd…`), then
+`make install-kernel`.
 
 ## 9. Chain-replay bootstrap (chain mode)
 
@@ -406,6 +403,6 @@ Replay catches up when `anchor_lag_blocks` drops below `finality_depth`.
 - **Trust model + attack surface** — `ARCHITECTURE.md` §5–§7
 - **Path Y4 `light_verify`** (pinned checkpoint, no live chain RPC) — `src/bin/light_verify.rs --help`, `docs/wallet-verification.md`
 - **API reference** — `src/api.rs` (each handler's doc-comment)
-- **Config surface** — `src/config.rs`, `vesl.toml.example`
+- **Config surface** — `src/config.rs`, `nns.toml.example`
 - **Roadmap** — `ARCHITECTURE.md` §11
 

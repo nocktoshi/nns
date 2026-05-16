@@ -14,7 +14,10 @@ use crate::chain::{
 };
 use crate::claim_note::ClaimNoteV1;
 use crate::kernel::{
-    build_scan_block_poke, build_scan_state_peek, decode_scan_state, first_error_message,
+    build_prove_recursive_genesis_poke, build_prove_recursive_transition_poke,
+    build_recursive_proof_peek, build_scan_block_poke, build_scan_state_peek,
+    decode_recursive_proof, decode_scan_state, first_error_message,
+    first_genesis_recursive_proof, first_recursive_transition_proof,
     first_scan_block_done, first_scan_block_error, format_effect_tags, has_effect,
     ClaimCandidate, ClaimWitness,
 };
@@ -228,6 +231,35 @@ pub async fn scan_once(state: &SharedState) -> Result<Option<ScanBlockOutcome>, 
         accumulator_size = scan_state.accumulator_size,
         "chain_follower: /scan-state peek"
     );
+
+    // Y3: If we are still at the genesis cursor, ensure we have the base-case
+    // recursive proof before we start scanning blocks. This proof becomes
+    // the root that all future incremental recursive proofs will chain from.
+    if scan_cursor_is_genesis_boot(
+        scan_state.last_proved_height,
+        scan_state.last_proved_digest.as_slice(),
+    ) {
+        tracing::info!("chain_follower: genesis cursor detected — producing base-case recursive proof");
+        let efx = {
+            let mut k = state.kernel.lock().await;
+            k.poke(
+                SystemWire.to_wire(),
+                build_prove_recursive_genesis_poke(),
+            )
+            .await
+            .map_err(|e| format!("genesis recursive prove poke failed: {e:?}"))?
+        };
+        if let Some(proof) = first_genesis_recursive_proof(&efx) {
+            tracing::info!(
+                proof_bytes = proof.len(),
+                "chain_follower: genesis recursive proof produced and stored in kernel state"
+            );
+        } else if let Some(_fail) = first_error_message(&efx) {
+            // Non-fatal for now — we can still run in Y2 mode until the prover
+            // is ready for the base case.
+            tracing::warn!("chain_follower: genesis recursive prove did not succeed (prover may trap until upstream opcodes land)");
+        }
+    }
 
     let current_chain_tip = match fetch_current_tip_height(&endpoint).await {
         Ok(p) => p,
@@ -454,16 +486,31 @@ async fn apply_prefetched_scan_blocks_inner(
             h.follower.record_error("scan_poke", msg.clone(), ts);
             return Err(msg);
         }
-        let Some(done) = first_scan_block_done(&effects) else {
+        if let Some(done) = first_scan_block_done(&effects) {
+            // === Success path for this block ===
+            // Y3: attempt recursive transition for the block we just successfully scanned
+            try_y3_recursive_transition_after_block(state, &block, &candidates).await;
+
+            state.maybe_persist_after_follower_scan().await;
+
+            tracing::debug!(
+                height = done.height,
+                block_digest = %atom_hex_preview(&done.digest, 16),
+                accumulator_root = %atom_hex_preview(&done.accumulator_root, 16),
+                "chain_follower: %scan-block-done"
+            );
+
+            last_done = Some(done);
+        } else {
             let tags = format_effect_tags(&effects);
             let msg = if has_effect(&effects, "invalid-cause") {
                 "%invalid-cause from kernel — `(soft cause)` failed (mold mismatch). \
-                 Rebuild out.jam from current hoon/app/app.hoon so `+$cause` includes `%scan-block`, \
+                 Rebuild nns.jam from current hoon/app/app.hoon so `+$cause` includes `%scan-block`, \
                  point NNS_KERNEL_JAM at it, redeploy."
                     .to_string()
             } else if effects.is_empty() {
                 "kernel did not emit %scan-block-done (empty effects — wrapper/nockapp returned no effects; \
-                 if stderr shows `nns: invalid cause`, rebuild out.jam; otherwise check nockapp poke wiring)"
+                 if stderr shows `nns: invalid cause`, rebuild nns.jam; otherwise check nockapp poke wiring)"
                     .to_string()
             } else {
                 format!(
@@ -474,18 +521,7 @@ async fn apply_prefetched_scan_blocks_inner(
             let mut h = state.hull.lock().await;
             h.follower.record_error("scan_poke", msg.clone(), ts);
             return Err(msg);
-        };
-
-        state.maybe_persist_after_follower_scan().await;
-
-        tracing::debug!(
-            height = done.height,
-            block_digest = %atom_hex_preview(&done.digest, 16),
-            accumulator_root = %atom_hex_preview(&done.accumulator_root, 16),
-            "chain_follower: %scan-block-done"
-        );
-
-        last_done = Some(done);
+        }
     }
 
     let Some(done) = last_done else {
@@ -687,4 +723,55 @@ fn note_data_from_proto(data: &PbNoteData) -> NoteData {
             .map(|entry| NoteDataEntry::new(entry.key.clone(), entry.blob.clone().into()))
             .collect(),
     )
+}
+
+/// Y3 helper: after a successful %scan-block for `block` with the given `candidates`,
+/// attempt to produce the recursive transition proof.
+///
+/// This is called from the success path inside `apply_prefetched_scan_blocks_inner`.
+/// It is best-effort (the transition may fail while the formula is still being completed).
+async fn try_y3_recursive_transition_after_block(
+    state: &SharedState,
+    block: &crate::chain::ScanBlockFetch,
+    candidates: &[ClaimCandidate],
+) {
+    // Peek the recursive proof that existed *before* this scan block
+    let prev_triple = {
+        let mut k = state.kernel.lock().await;
+        k.peek(build_recursive_proof_peek())
+            .await
+            .ok()
+            .and_then(|r| decode_recursive_proof(&r).ok().flatten())
+    };
+
+    let Some((prev_proof, prev_subj, prev_form)) = prev_triple else {
+        return; // No previous recursive proof yet (still at genesis or first block)
+    };
+
+    let tx_ids: Vec<Vec<u8>> = block.page_tx_ids.iter().map(|id| id.to_vec()).collect();
+
+    let transition_poke = build_prove_recursive_transition_poke(
+        &prev_proof,
+        &prev_subj,
+        &prev_form,
+        &block.page_digest,
+        &tx_ids,
+        candidates,
+        &[], // TODO: pass the real Nockchain block sp proof for verify:sp-verifier
+    );
+
+    if let Ok(efx) = {
+        let mut k = state.kernel.lock().await;
+        k.poke(SystemWire.to_wire(), transition_poke).await
+    } {
+        if first_recursive_transition_proof(&efx).is_some() {
+            tracing::info!(height = block.height, "Y3: recursive transition proof produced");
+        } else if let Some(msg) = first_error_message(&efx) {
+            tracing::debug!(
+                height = block.height,
+                error = %msg,
+                "Y3 transition prove (expected while formula is incomplete)"
+            );
+        }
+    }
 }

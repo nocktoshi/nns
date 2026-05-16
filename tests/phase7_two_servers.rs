@@ -17,10 +17,10 @@ use nockapp::NockApp;
 use vesl_core::SettlementConfig;
 
 fn kernel_jam() -> Vec<u8> {
-    let path = std::env::var("NNS_KERNEL_JAM").unwrap_or_else(|_| "out.jam".to_string());
+    let path = std::env::var("NNS_KERNEL_JAM").unwrap_or_else(|_| "nns.jam".to_string());
     std::fs::read(&path)
-        .or_else(|_| std::fs::read("../out.jam"))
-        .unwrap_or_else(|e| panic!("could not read kernel jam at {path} or ../out.jam: {e}"))
+        .or_else(|_| std::fs::read("../nns.jam"))
+        .unwrap_or_else(|e| panic!("could not read kernel jam at {path} or ../nns.jam: {e}"))
 }
 
 static TRACING_INIT: std::sync::Once = std::sync::Once::new();
@@ -30,7 +30,7 @@ async fn boot_kernel(name: &str) -> (tempfile::TempDir, SharedState) {
     let mut cli = boot::default_boot_cli(true);
     cli.stack_size = NockStackSize::Large;
     TRACING_INIT.call_once(|| {
-        nns_vesl::prepare_tracy_for_host_cpu();
+        nns_vesl::apply_nns_config();
         let _ = boot::init_default_tracing(&cli);
     });
     let prover_hot_state = zkvm_jetpack::hot::produce_prover_hot_state();

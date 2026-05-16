@@ -12,7 +12,7 @@
 //! Z-map keys are Tip5 5-limb digests of the name cord (`++name-key:na`), matching the ``based``
 //! key shape used for v1 `tx-id` rows — see `hoon/lib/nns-accumulator.hoon`.
 //!
-//! Tests load `out.jam` (or `NNS_KERNEL_JAM`). Rebuild the kernel jam after Hoon changes:
+//! Tests load `nns.jam` (or `NNS_KERNEL_JAM`). Rebuild the kernel jam after Hoon changes:
 //! `make kernel-jam` or `hoonc --new hoon/app/app.hoon hoon/`.
 //!
 //! **`GET /accumulator/:name` JSON** is logged as one line per request when
@@ -45,11 +45,11 @@ use vesl_core::SettlementConfig;
 static INIT_TRACING: Once = Once::new();
 
 fn kernel_jam() -> Vec<u8> {
-    let path = std::env::var("NNS_KERNEL_JAM").unwrap_or_else(|_| "out.jam".into());
+    let path = std::env::var("NNS_KERNEL_JAM").unwrap_or_else(|_| "nns.jam".into());
     match std::fs::read(&path) {
         Ok(b) => b,
-        Err(_) => std::fs::read("../out.jam")
-            .unwrap_or_else(|e| panic!("could not read kernel jam at {path} or ../out.jam: {e}")),
+        Err(_) => std::fs::read("../nns.jam")
+            .unwrap_or_else(|e| panic!("could not read kernel jam at {path} or ../nns.jam: {e}")),
     }
 }
 
@@ -100,7 +100,7 @@ async fn setup() -> (tempfile::TempDir, nns_vesl::SharedState) {
     let mut cli = boot::default_boot_cli(true);
     cli.stack_size = NockStackSize::Large;
     INIT_TRACING.call_once(|| {
-        nns_vesl::prepare_tracy_for_host_cpu();
+        nns_vesl::apply_nns_config();
         let trace_cli = boot::default_boot_cli(true);
         boot::init_default_tracing(&trace_cli);
     });

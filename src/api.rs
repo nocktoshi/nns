@@ -27,9 +27,9 @@ use tower_http::cors::{Any, CorsLayer};
 
 use crate::kernel::{
     build_accumulator_jam_peek, build_accumulator_peek, build_accumulator_proof_peek,
-    build_kernel_debug_peek, build_scan_state_peek, decode_accumulator_entry,
-    decode_accumulator_jam, decode_accumulator_proof_axis, decode_kernel_debug,
-    decode_scan_state,
+    build_kernel_debug_peek, build_recursive_proof_peek, build_scan_state_peek,
+    decode_accumulator_entry, decode_accumulator_jam, decode_accumulator_proof_axis,
+    decode_kernel_debug, decode_recursive_proof, decode_scan_state,
 };
 use crate::state::{hex_encode, SharedState};
 use crate::types::{AccumulatorLookupResponse, AccumulatorValueResponse, KernelDebugResponse};
@@ -214,6 +214,20 @@ async fn accumulator_handler(
         };
         (proof_axis, scan_state, snap)
     };
+
+    // Y3 recursive proof (global for current tip; present after first successful
+    // recursive-step prove). Always included when available (small).
+    let recursive_proof = {
+        let rp = k
+            .peek(build_recursive_proof_peek())
+            .await
+            .map_err(|e| server_error(format!("kernel recursive-proof peek failed: {e:?}")))
+            .and_then(|slab| {
+                decode_recursive_proof(&slab)
+                    .map_err(|e| server_error(format!("decode recursive-proof failed: {e}")))
+            })?;
+        rp
+    };
     drop(k);
 
     let value = Some(AccumulatorValueResponse {
@@ -223,11 +237,24 @@ async fn accumulator_handler(
         block_digest: hex_encode(&entry.block_digest),
     });
 
+    let (recursive_proof_hex, recursive_subject_jam_hex, recursive_formula_jam_hex) =
+        match recursive_proof {
+            Some((p, s, f)) => (
+                Some(hex_encode(&p)),
+                Some(hex_encode(&s)),
+                Some(hex_encode(&f)),
+            ),
+            None => (None, None, None),
+        };
+
     Ok(Json(AccumulatorLookupResponse {
         name,
         value,
         proof_axis: proof_axis.map(|axis| hex_encode(&axis)),
         accumulator_snapshot_hex,
+        recursive_proof_hex,
+        recursive_subject_jam_hex,
+        recursive_formula_jam_hex,
         last_proved_height: scan_state.last_proved_height,
         last_proved_digest: hex_encode(&scan_state.last_proved_digest),
         accumulator_root: hex_encode(&scan_state.accumulator_root),

@@ -119,14 +119,14 @@ fn treasury_root_hash() -> &'static Hash {
 
 /// `%lock` note-data values are `jam([%0 lock])` — see nockchain `wallet-tx-builder`
 /// (`LockPayloadNoun`), not a bare [`Lock`] jam.
-fn decode_lock_note_data_payload(noun: &Noun) -> Option<Lock> {
-    if let Ok(cell) = noun.as_cell() {
+fn decode_lock_note_data_payload(noun: &Noun, space: &nockvm::noun::NounSpace) -> Option<Lock> {
+    if let Ok(cell) = noun.in_space(space).as_cell() {
         let tag = cell.head().as_atom().ok()?.as_u64().ok()?;
         if tag == 0 {
-            return Lock::from_noun(&cell.tail()).ok();
+            return Lock::from_noun(&cell.tail().noun(), space).ok();
         }
     }
-    Lock::from_noun(noun).ok()
+    Lock::from_noun(noun, space).ok()
 }
 
 /// Consensus lock root for the v1 `lock` jam in [`PbNoteData`] entries (`key == "lock"`).
@@ -134,8 +134,9 @@ fn decode_lock_note_data_payload(noun: &Noun) -> Option<Lock> {
 /// Matches [`Lock::hash`] / explorer “lock root”, not the note’s `firstName~lastName`.
 fn lock_root_hash_from_lock_jam(jam: &[u8]) -> Option<Hash> {
     let mut stack = NockStack::new(NOCK_STACK_SIZE, 0);
+    let space = stack.noun_space();
     let noun = Noun::cue_bytes_slice(&mut stack, jam).ok()?;
-    let lock = decode_lock_note_data_payload(&noun)?;
+    let lock = decode_lock_note_data_payload(&noun, &space)?;
     lock.hash().ok()
 }
 

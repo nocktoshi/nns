@@ -1,4 +1,5 @@
 target/
 .nns-data/
 .DS_Store
-out.jam
+nns.jam
+hoon/packages

@@ -1,7 +1,7 @@
 //! Z-set tx-id order for `%scan-block` (40-byte atoms) — same visit order as
 //! Hoon `~(tap z-in tx-ids)` / `nockchain_math::zoon::zset::ZSet`.
 //!
-//! Requires `out.jam` (or `NNS_KERNEL_JAM`).
+//! Requires `nns.jam` (or `NNS_KERNEL_JAM`).
 
 use std::sync::{Arc, Once};
 
@@ -26,11 +26,11 @@ use vesl_core::SettlementConfig;
 static INIT_TRACING: Once = Once::new();
 
 fn kernel_jam() -> Vec<u8> {
-    let path = std::env::var("NNS_KERNEL_JAM").unwrap_or_else(|_| "out.jam".into());
+    let path = std::env::var("NNS_KERNEL_JAM").unwrap_or_else(|_| "nns.jam".into());
     match std::fs::read(&path) {
         Ok(b) => b,
-        Err(_) => std::fs::read("../out.jam")
-            .unwrap_or_else(|e| panic!("could not read kernel jam at {path} or ../out.jam: {e}")),
+        Err(_) => std::fs::read("../nns.jam")
+            .unwrap_or_else(|e| panic!("could not read kernel jam at {path} or ../nns.jam: {e}")),
     }
 }
 
@@ -84,7 +84,7 @@ async fn setup() -> (tempfile::TempDir, nns_vesl::SharedState) {
     let mut cli = boot::default_boot_cli(true);
     cli.stack_size = NockStackSize::Large;
     INIT_TRACING.call_once(|| {
-        nns_vesl::prepare_tracy_for_host_cpu();
+        nns_vesl::apply_nns_config();
         let trace_cli = boot::default_boot_cli(true);
         boot::init_default_tracing(&trace_cli);
     });

@@ -18,7 +18,7 @@ Path Y4 verifies a **lookup bundle** offline: **no live Nockchain RPC**, no
    the NNS kernel poke **`%verify-stark-explicit`** (same jets as the hull),
    with `recursive_subject_jam_hex` and `recursive_formula_jam_hex` (raw JAM
    hex of the traced nouns). Kernel JAM: `--kernel-jam` / `$NNS_KERNEL_JAM` /
-   `./out.jam`.
+   `./nns.jam`.
 3. **Accumulator snapshot** — when `value` is present, `accumulator_snapshot_jam_hex`
    must carry **`jam(nns-accumulator)`** for the claimed state. The hull exposes
    it as hex on **`GET /accumulator/:name?wallet_export=true`** (`accumulator_snapshot_hex`).
@@ -89,7 +89,7 @@ echo '{
   --allow-missing-z-in-proof
 ```
 
-Rebuild **`out.jam`** after pulling Hoon changes for **`%accumulator-jam`** peek
+Rebuild **`nns.jam`** after pulling Hoon changes for **`%accumulator-jam`** peek
 and **`%verify-accumulator-snapshot`** cause.
 
 
@@ -99,10 +99,10 @@ curl -s 'http://localhost:3000/accumulator/nns.nock?wallet_export=true' | jq > b
 ```
 
 ```
-cargo +nightly run -p nns-vesl --bin light_verify -- --checkpoint-height "$(jq -r '.last_proved_height' bundle.json)" --checkpoint-digest-hex "$(jq -r '.last_proved_digest // .last_proved_digest_hex' bundle.json)" --kernel-jam out.jam --allow-empty-recursive-proof <<< "$(jq '{name, value:{owner:.value.owner,tx_hash_hex:(.value.tx_hash_hex//.value.tx_hash),claim_height:.value.claim_height,block_digest_hex:(.value.block_digest_hex//.value.block_digest)},last_proved_height,last_proved_digest_hex:(.last_proved_digest_hex//.last_proved_digest),accumulator_root_hex:(.accumulator_root_hex//.accumulator_root),recursive_proof_hex:"",accumulator_snapshot_jam_hex:(.accumulator_snapshot_jam_hex//.accumulator_snapshot_hex//""),headers_to_checkpoint:(.headers_to_checkpoint//[])}' bundle.json)"
+cargo +nightly run -p nns-vesl --bin light_verify -- --checkpoint-height "$(jq -r '.last_proved_height' bundle.json)" --checkpoint-digest-hex "$(jq -r '.last_proved_digest // .last_proved_digest_hex' bundle.json)" --kernel-jam nns.jam --allow-empty-recursive-proof <<< "$(jq '{name, value:{owner:.value.owner,tx_hash_hex:(.value.tx_hash_hex//.value.tx_hash),claim_height:.value.claim_height,block_digest_hex:(.value.block_digest_hex//.value.block_digest)},last_proved_height,last_proved_digest_hex:(.last_proved_digest_hex//.last_proved_digest),accumulator_root_hex:(.accumulator_root_hex//.accumulator_root),recursive_proof_hex:"",accumulator_snapshot_jam_hex:(.accumulator_snapshot_jam_hex//.accumulator_snapshot_hex//""),headers_to_checkpoint:(.headers_to_checkpoint//[])}' bundle.json)"
 ```
 ```
-     Running `target/debug/light_verify --checkpoint-height 65495 --checkpoint-digest-hex 1c42ffee8b2469daf9741d0ccb67ba93a5613718cfee14d0007023130ba49d5b80954a07480a4aae --kernel-jam out.jam --allow-empty-recursive-proof`
+     Running `target/debug/light_verify --checkpoint-height 65495 --checkpoint-digest-hex 1c42ffee8b2469daf9741d0ccb67ba93a5613718cfee14d0007023130ba49d5b80954a07480a4aae --kernel-jam nns.jam --allow-empty-recursive-proof`
 verified: nns.nock
   last_proved_height: 65495
   checkpoint: height=65495 (1c42f……)

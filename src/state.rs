@@ -121,22 +121,16 @@ impl AppState {
             .unwrap_or(0)
     }
 
-    /// Full flush: kernel checkpoint then mirror JSON. **Lock order:**
-    /// kernel is acquired and released before touching `hull`, so no
-    /// code waits on `hull` while holding `kernel`.
+    /// Full flush hook on shutdown. Current `nockapp` persists checkpoints
+    /// inside the serf loop during normal pokes; there is no public
+    /// `save_blocking` API to call from the hull.
     pub async fn persist_all(&self) {
-        if let Err(e) = self.kernel.lock().await.save_blocking().await {
-            tracing::error!("failed to save kernel checkpoint: {e:?}");
-        }
+        tracing::debug!("persist_all: nockapp checkpoints during kernel pokes (no explicit flush API)");
     }
 
-    /// After a successful chain-follower `%scan-block`, maybe write a
-    /// checkpoint. Full `save_blocking` of the NockApp state is large
-    /// (~tens of MB) and was dominating per-block latency; by default we
-    /// only flush every `NNS_FOLLOWER_PERSIST_EVERY` blocks (default 1000).
-    /// Set the env var to `1` to checkpoint every block (safest, slowest).
-    /// Shutdown in `main` still calls [`Self::persist_all`], so the last
-    /// few in-memory blocks are flushed on SIGINT/SIGTERM.
+    /// Batched persist stride hook after follower `%scan-block`. Checkpoints
+    /// are written by `nockapp` during pokes; this only tracks scan count for
+    /// observability when `NNS_FOLLOWER_PERSIST_EVERY` is set.
     pub async fn maybe_persist_after_follower_scan(&self) {
         let stride = follower_persist_stride_blocks();
         let prev = self
@@ -147,19 +141,13 @@ impl AppState {
             tracing::trace!(
                 n,
                 stride,
-                "follower: skipping kernel checkpoint this block (batched persist)"
+                "follower: batched persist stride (checkpoints handled by nockapp during pokes)"
             );
             return;
         }
-        match self.kernel.lock().await.save_blocking().await {
-            Ok(()) => {
-                self.follower_scans_since_checkpoint
-                    .store(0, Ordering::Relaxed);
-            }
-            Err(e) => {
-                tracing::error!("failed to save kernel checkpoint: {e:?}");
-            }
-        }
+        self.follower_scans_since_checkpoint
+            .store(0, Ordering::Relaxed);
+        tracing::trace!("follower: persist stride reached (nockapp serf checkpoints on poke)");
     }
 }
 

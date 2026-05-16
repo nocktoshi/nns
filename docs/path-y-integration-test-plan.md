@@ -20,7 +20,7 @@ describes.
 
 | # | Check | Pass criterion |
 |---|--------|------------------|
-| 0.1 | Rust + kernel | `make install` succeeds; `out.jam` matches current `hoon/app/app.hoon`. |
+| 0.1 | Rust + kernel | `make install` succeeds; `nns.jam` matches current `hoon/app/app.hoon`. |
 | 0.2 | Automated suite | `cargo +nightly test` green on this branch. |
 | 0.3 | Nockchain build | Your fork with **`note_data` on v1 outputs** in `GetTransactionDetails` (and consistent indexing after confirm). See [`nockchain-fork-for-nns.md`](nockchain-fork-for-nns.md). |
 | 0.4 | Tx builder | A way to attach **NNS-shaped** NoteData on an output ([`claim-note-wallet-support.md`](claim-note-wallet-support.md), e.g. nockchain#85 or equivalent). |
@@ -135,6 +135,6 @@ Before calling Path Y “integration verified” for your fork:
 - [ ] Phase D shows **at least one** real claim end-to-end in accumulator.
 - [ ] Phase E.2–E.5 exercised enough to trust payment + uniqueness rules.
 
-Capture in the ticket / PR: Nockchain commit, `vesl.toml` redacted snippet,
+Capture in the ticket / PR: Nockchain commit, `nns.toml` redacted snippet,
 example tx id, block height **H**, and screenshot or `jq` of final
 `scan_state` after catch-up.

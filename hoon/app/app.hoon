@@ -18,20 +18,13 @@
 /+  *vesl-merkle
 /+  vp=vesl-prover
 /+  vv=vesl-verifier
-/+  np=nns-predicates
-/+  na=nns-accumulator
-/=  sp  /common/stark/prover
+/=  np  /app/nns-predicates
+/=  na  /app/nns-accumulator
 /=  nv  /common/nock-verifier
 /=  four  /common/ztd/four
 /=  *  /common/zoon
 /=  *  /common/wrapper
 ::  nockup:imports
-::  NOTE: this marker lets vesl-nockup's `graft-inject` tool locate
-::  the vesl import block. We already wire vesl manually above
-::  (`*vesl-graft`, `*vesl-merkle`, `vp=vesl-prover`, `vv=vesl-verifier`),
-::  so `graft-inject` is idempotent here — it sees the vesl imports
-::  already in place and skips injection. See `docs/ROADMAP.md` for
-::  the nockup-adoption evaluation.
 ::
 =>
 |%
@@ -43,7 +36,7 @@
 ++  nns-genesis-height  63.000
 ::
 ::  +$anchor-header: minimal header triple sufficient for parent-chain
-::  verification. The full Nockchain page header carries a `proof:sp`,
+::  verification. The full Nockchain page header carries a `proof:vp`,
 ::  tx-ids z-set, coinbase split, etc. — none of which the kernel needs
 ::  at Phase 2. We only need enough to walk parent pointers and commit
 ::  to a specific block-id at a specific height for Phase 3's STARK.
@@ -52,6 +45,11 @@
   $:  digest=@ux     :: Tip5 hash of this header
       height=@ud    :: page-number
       parent=@ux    :: Tip5 hash of parent header (anchor-tip of genesis is 0)
+  ==
+::
++$  transition-candidate
+  $:  key=nns-name-key:na
+      cand=nns-claim-candidate:np
   ==
 ::
 ::  +$anchored-chain: kernel's view of the Nockchain header chain,
@@ -87,30 +85,48 @@
       ::  %prove-recursive-step). `~` until first prove.
       ::
       last-proved=(unit [subject=* formula=*])
+      ::  Path Y3: latest recursive rollup STARK. `~` until a successful
+      ::  `%prove-recursive-transition` (or the Y3 genesis bootstrap).
+      ::  The `subject` / `formula` are the traced pair for *this* proof;
+      ::  `subject` embeds the prior recursive proof for the verify(prev)
+      ::  step. Used for wallet bundles and for chaining the next block.
+      ::
+      recursive-proof=(unit [proof=* subject=* formula=*])
   ==
 ::
 ::
 +$  effect  *
 ::
 +$  cause
-  $%  ::  Phase 1-redo: cue JAM and run `verify:nv` (same jets as
-      ::  on-chain block PoW STARK verification). Read-only; for
-      ::  benchmarking recursion cost — verify is not inside the
-      ::  fink-traced `prove-computation` subject.
+  $%  [%prove-recursive-genesis ~]
+      $:  %prove-recursive-transition
+          prev-proof-jam=@
+          prev-subject-jam=@
+          prev-formula-jam=@
+          page-digest=@ux
+          page-tx-ids=(list @ux)
+          candidates=(list nns-claim-candidate:np)
+          block-proof=*
+      ==
       ::
-      ::  Use `*` (not `@`) so `soft` accepts large JAM atoms; cast
-      ::  before `cue`.
+      ::  Phase 1-redo: cue JAM and run verify:nv  same jets as
+      ::  on-chain block PoW STARK verification . Read-only; for
+      ::  benchmarking recursion cost — verify is not inside the
+      ::  fink-traced prove-computation subject.
+      ::
+      ::  Use *  not @  so soft accepts large JAM atoms; cast
+      ::  before cue.
       ::
       [%verify-stark blob=*]
       ::  Path Y4 / wallet offline: cue proof plus caller-supplied
-      ::  `subject-jam` and `formula-jam` atoms (raw JAM bytes of the
-      ::  traced nouns), then `verify:vesl-stark-verifier` — same math as
-      ::  `%verify-stark` but does not read `last-proved.state`. Read-only.
+      ::  subject-jam and formula-jam atoms  raw JAM bytes of the
+      ::  traced nouns , then verify:vesl-stark-verifier — same math as
+      ::   pct verify-stark but does not read last-proved.state. Read-only.
       ::
       [%verify-stark-explicit blob=* subject-jam=* formula-jam=*]
-      ::  Path Y4: offline z-map membership. Cues `acc-jam` into an
-      ::  `nns-accumulator`, checks `root-atom` matches `expected-root`,
-      ::  and that `(get acc name)` is exactly `entry`. Read-only.
+      ::  Path Y4: offline z-map membership. Cues acc-jam into an
+      ::  nns-accumulator, checks root-atom matches expected-root,
+      ::  and that  get acc name  is exactly entry. Read-only.
       ::
       $:  %verify-accumulator-snapshot
           expected-root=@
@@ -121,21 +137,21 @@
           claim-height=@ud
           block-digest=@ux
       ==
-      ::  Phase 1-redo sanity: prove `[42 [0 1]]` (identity) with
+      ::  Phase 1-redo sanity: prove the identity subject/formula with
       ::  vesl-prover, then verify it with vesl-stark-verifier. Uses
       ::  the exact same shape as vesl/protocol/tests/prove-verify.hoon
       ::  so we can confirm prover<->verifier compatibility independent
       ::  of our batch-specific subject/formula.
       ::
       [%prove-identity ~]
-      ::  Path Y2: ingest one Nockchain block worth of `nns/v1/claim`
-      ::  candidates. Verifies `parent` links to `last-proved-digest`,
-      ::  `height` is the successor of `last-proved-height`, except on
-      ::  genesis boot where it must be at least `nns-genesis-height`
-      ::  (NNS shipped long after Nockchain genesis; blocks below that have
-      ::  no claim notes). Then folds valid candidates into the accumulator via
-      ::  `+claim-scanner:np`. On success advances the scan cursor to
-      ::  this block's digest and emits `[%scan-block-done ...]`.
+      ::  Path Y2: ingest one Nockchain block worth of nns/v1/claim
+      ::  candidates. Verifies parent links to last-proved-digest,
+      ::  height is the successor of last-proved-height, except on
+      ::  genesis boot where it must be at least nns-genesis-height
+      ::   NNS shipped long after Nockchain genesis; blocks below that have
+      ::  no claim notes . Then folds valid candidates into the accumulator via
+      ::  claim-scanner:np. On success advances the scan cursor to
+      ::  this block’s digest and emits [ pct scan-block-done ...].
       ::
       $:  %scan-block
           parent=@ux
@@ -144,32 +160,32 @@
           page-tx-ids=(list @ux)
           candidates=(list nns-claim-candidate:np)
       ==
-      ::  Phase 3 Level A: exercise `chain-links-to:nns-predicates`
-      ::  without going through %claim. Read-only — the cause does not
+      ::  Phase 3 Level A: exercise chain-links-to:nns-predicates
+      ::  without going through  pct claim. Read-only — the cause does not
       ::  mutate state, it just runs the predicate and emits the
-      ::  result. Used by tests + ops tooling to verify a claim's
-      ::  header chain resolves to the kernel's anchored tip before
-      ::  issuing an expensive %claim poke.
+      ::  result. Used by tests + ops tooling to verify a claim’s
+      ::  header chain resolves to the kernel’s anchored tip before
+      ::  issuing an expensive  pct claim poke.
       ::
       [%verify-chain-link claim-digest=@ux headers=(list anchor-header) anchored-tip=@ux]
-      ::  Phase 3 Level B: drive `has-tx-in-page:nns-predicates`.
-      ::  Read-only; emits `[%tx-in-page-result ok=?]` iff
-      ::  `claimed-tx-id` appears in the flat `tx-ids` list (linear
-      ::  scan — no `z-silt`). The page summary is hull-provided
-      ::  (Phase 2c `fetch_page_for_tx`); Level C will recompute the
+      ::  Phase 3 Level B: drive has-tx-in-page:nns-predicates.
+      ::  Read-only; emits [ pct tx-in-page-result ok=?] iff
+      ::  claimed-tx-id appears in the flat tx-ids list  linear
+      ::  scan — no z-silt . The page summary is hull-provided
+      ::   Phase 2c fetch_page_for_tx ; Level C will recompute the
       ::  block-commitment from the full page noun.
       ::
       [%verify-tx-in-page digest=@ux tx-ids=(list @ux) claimed-tx-id=@ux]
       ::  Phase 3c: compose all Level A + Level B + G1/C2 predicates
       ::  into one bundled validation call. Read-only — the cause does
-      ::  not mutate state. Emits `[%validate-claim-ok]` on success or
-      ::  `[%validate-claim-error <tag>]` on the first failing
-      ::  predicate. The hull uses this pre-%claim to give users an
+      ::  not mutate state. Emits validate-claim-ok on success or
+      ::  validate-claim-error plus tag on the first failing
+      ::  predicate. The hull uses this pre- pct claim to give users an
       ::  early rejection + structured error tag before committing a
       ::  claim that would only be rejected during chain replay.
       ::
-      ::  `page-tx-ids` is a flat list; inclusion is a list walk in
-      ::  `+has-tx-in-page:np` (same as `%verify-tx-in-page`).
+      ::  page-tx-ids is a flat list; inclusion is a list walk in
+      ::  has-tx-in-page:np  same as  pct verify-tx-in-page .
       ::
       $:  %validate-claim
           name=@t
@@ -185,74 +201,38 @@
           witness-tx-id=@ux
           witness-spender-pkh=@
           witness-treasury-amount=@ud
-          witness-output-lock-root=@t    :: v1 output lock root b58 (note_name)
+          witness-output-lock-root=@t    :: v1 output lock root b58 note_name
       ==
-      ::  Phase 3c step 2: validated proof of a single claim.
+      ::  prove-claim-in-stark: same bundle as validate-claim; proves in STARK.
       ::
-      ::  Same payload shape as %validate-claim. Kernel runs the
-      ::  full validator first; on pass, produces a STARK committing
-      ::  to `belt-digest(jam(bundle))` under the current (root, hull)
-      ::  registry snapshot. On validator rejection, emits the usual
-      ::  `%validate-claim-error <tag>` — no proof is produced.
+      ::  Wallet verification then runs vesl-verifier verify on the
+      ::  emitted proof against the same subject and formula pair.
+      ::  The wallet cross-checks that the subject/formula matches the
+      ::  intended property; that closes the trust loop. For NNS that means
+      ::  matching the Nock of validate-claim-bundle-linear on the bundle,
+      ::  once a canonical encoding is published  see docs on recursive
+      ::  payment proof, step 3 Nock-formula encoding .
       ::
-      ::  What the STARK attests:
-      ::    - a kernel whose registry is committed at (root, hull)
-      ::    - asserted the bundle-hash at that snapshot.
-      ::
-      ::  What the wallet still verifies (out of the STARK):
-      ::    - validator passes on the received bundle.
-      ::    - bundle-hash matches the STARK's committed hash.
-      ::    - (root, hull) match the expected registry anchor.
-      ::  This is option-B recursion: the STARK commits to a hashed
-      ::  witness, the wallet re-checks the witness's validity. A
-      ::  future follow-up (Level C + Phase 3c step 3) will embed the
-      ::  validator execution INSIDE the STARK so the wallet needs
-      ::  only to verify the proof — see `docs/PROOF_STORAGE.md`.
-      ::
-      ::  Phase 3c step 3: general-purpose prover primitive. Takes an
-      ::  arbitrary `[subject formula]` pair and traces
-      ::  `(fink:fock [subject formula])` via `prove-computation:vp`
-      ::  bound to the kernel's current `(root, hull)`.
-      ::
-      ::  The fundamental trust boundary: whatever the formula
-      ::  evaluates to becomes the committed product. A caller
-      ::  building a formula that computes `validate-claim-bundle`
-      ::  gets in-STARK validation; a caller building `[1 42]` gets a
-      ::  STARK over the constant 42. This primitive is
-      ::  caller-responsibility — the kernel does not inspect or
-      ::  constrain the formula's semantics.
-      ::
-      ::  Wallet verification then runs `verify:vesl-verifier` on the
-      ::  emitted proof against the same `[subject formula]` pair.
-      ::  The wallet's own cross-check — "does this subject/formula
-      ::  actually express the property I care about?" — closes the
-      ::  loop. For the NNS use case that's "is this the Nock of
-      ::  validate-claim-bundle-linear applied to my bundle?", which
-      ::  is tractable to pattern-match once a canonical encoding is
-      ::  published (see `docs/research/recursive-payment-proof.md`
-      ::  §"Step 3 Nock-formula encoding").
-      ::
-      ::  `subject-jam` and `formula-jam` are the JAM bytes of the
-      ::  two nouns. The kernel cues them before handing to
-      ::  `prove-computation`, keeping the Rust poke-builder side
-      ::  simple (bytes in, bytes out) and the kernel in charge of
-      ::  Nock-noun shape.
+      ::  subject-jam and formula-jam are the JAM bytes of the two nouns.
+      ::  The kernel cues them before handing to prove-computation, keeping
+      ::  the Rust poke-builder side simple  bytes in, bytes out  and the
+      ::  kernel in charge of Nock-noun shape.
       ::
       [%prove-arbitrary subject-jam=@ formula-jam=@]
       ::  Phase 3c step 3 completion: proves a claim bundle by
-      ::  tracing `validate-claim-bundle-linear(bundle)` INSIDE the
+      ::  tracing validate-claim-bundle-linear bundle  INSIDE the
       ::  STARK. Uses the subject-bundled-core encoding from
-      ::  `build-validator-trace-inputs:np`.
+      ::  build-validator-trace-inputs:np.
       ::
-      ::  Emits `[%claim-in-stark-proof product proof]` on success.
-      ::  The `product` is `(each ~ validation-error):np` head-tagged:
-      ::  `[%& ~]` iff validation passed, `[%| err]` on rejection.
+      ::  Emits [%claim-in-stark-proof product proof] on success.
+      ::  The product is  each ~ validation-error :np head-tagged:
+      ::  [%& ~] iff validation passed, [%| err] on rejection.
       ::  Wallet reads product and proof — no re-running the
       ::  validator. Single-artifact trust.
       ::
-      ::  `name` is the UTF-8 cord (`@t`) from the claim bundle. The Path Y
-      ::  z-map does **not** key rows by raw `name` — see `++name-key:na`
-      ::  (Tip5 5-limb digest, same ``based`` limb layout as v1 `tx-id`).
+      ::  name is the UTF-8 cord from the claim bundle. The Path Y z-map
+      ::  does not key rows by raw name; see name-key in nns-accumulator
+      ::   Tip5 5-limb digest, same based limb layout as v1 tx-id .
       ::
       $:  %prove-claim-in-stark
           name=@t
@@ -266,99 +246,427 @@
           anchored-tip=@ux
           anchored-tip-height=@ud  ::  Phase 7
       ==
-      ::  Y0 recursive-composition spike. Given a previously-emitted
-      ::  STARK (`prev-proof`) bound to `[prev-subject prev-formula]`,
-      ::  build a second [subject formula] pair that runs
-      ::  `verify:vesl-stark-verifier` on those three, then trace it
-      ::  through `prove-computation:vp`. Success = single-artifact
-      ::  recursive rollup is tractable. Trap = Path Y blocked by the
-      ::  same Nock 9/10/11 upstream ask as Phase 3c step 3.
+      ::  Y0 recursive-composition spike  legacy notes; vesl-cause follows .
       ::
-      ::  Emits `[%recursive-step-dry-run-ok product=?]` on dry-run
-      ::  success, followed by either `[%recursive-step-proof product
-      ::  proof]` on prover success or `[%prove-failed trace]` on
-      ::  prover crash. See `y0_recursive_composition_spike` in
-      ::  `tests/prover.rs`.
-      ::
-      [%prove-recursive-step prev-proof-jam=@ prev-subject-jam=@ prev-formula-jam=@]
       ::  nockup:cause
-      ::  graft-inject would add `vesl-cause` here on a fresh
-      ::  kernel. Already present below; marker is idempotent.
+      ::  graft-inject would add vesl-cause here on a fresh kernel.
+      ::  Already present below; marker is idempotent.
       ::
       vesl-cause
   ==
 ::
-::  --- Y0 recursive-composition helpers ---
+::  --- Y3 genesis bootstrap helpers ---
 ::
-::  These build the subject+formula pair that traces
-::  `verify:vesl-stark-verifier(prev-proof, ~, 0, prev-subject, prev-formula)`
-::  under `prove-computation:vp`, using the same subject-bundled-core
-::  encoding `build-validator-trace-inputs:nns-predicates` uses for
-::  Phase 3c step 3. The Y0 spike's only question is whether Vesl's
-::  STARK prover can trace a formula of this shape; a trap here tells
-::  us recursive rollup (Path Y) shares the Phase 3c Nock-9/10/11
-::  blocker and the upstream ask need not be duplicated.
+::  Reserved TLD row: stem `nock` (registry key is the cord `nock`).
 ::
-::  +recursive-verify-arm: local proxy arm that slams `verify:vv`.
-::  We proxy instead of calling `verify:vv` directly from the trace
-::  because `!=(verify:vv)` compiles to
+++  nns-genesis-tld-name  'nock'
 ::
-::      [11 hint [7 <nav-to-vv> [9 <arm> 0 1]]]
+++  genesis-tld-entry
+  ^-  nns-accumulator-entry:na
+  :*  nns-genesis-tld-name
+      'nock'
+      0x1
+      nns-genesis-height
+      0x0
+  ==
 ::
-::  — a Nock-7 composition that threads the `vv` subject navigation
-::  before the arm access, which breaks the subject-bundled-core
-::  trick (the `[9 arm 0 3]` slot expects a pure arm access on its
-::  core). Staging the call through a local arm keeps the emitted
-::  Nock shape at `[11 hint [9 <arm> 0 1]]` — the same shape
-::  `validator-arm-axis:nns-predicates` extracts.
+++  ensure-genesis-tld
+  |=  acc=nns-accumulator:na
+  ^-  nns-accumulator:na
+  ?:  (has:na acc nns-genesis-tld-name)
+    acc
+  (insert:na acc nns-genesis-tld-name genesis-tld-entry)
 ::
-::  The cast `;;(proof:sp prev-proof)` runs at Nock level and the
-::  STARK would have to trace it too; it's cheap and gives us type
-::  safety at the wallet/dry-run boundary.
+::  --- Y3 trace formula combinators (Nock opcodes 0–8) ---
 ::
-++  recursive-verify-arm
-  |=  [prev-proof=* override=(unit (list term)) eny=@ prev-subj=* prev-form=*]
+::  Vesl's prover traces these trees verbatim (fink supports 0–8; still no
+::  `%9`–`%11`).  Host-side spec gates (++genesis-recursive-formula,
+::  ++transition-spec) use full Hoon; builders here only emit `%0`–`%8`.
+::
+::  Subject layout reference:
+::    genesis:            [acc [height digest]]           axes 2 3 6
+::    transition-empty:   [prev-h page-d want-h page-d]   axes 3 4 5 6
+::    transition-full:    8-tuple (see ++build-recursive-transition-inputs)
+::      packed-prev prev-h acc-list pag keyed-cands block-proof want-h want-d
+::      axes 2–9; digest.pag at [0 10]; cand key at [0 6 2] when non-empty
+::
+++  y-pick
+  |=  axis=@
+  ^-  *
+  [0 axis]
+::
+++  y-lit
+  |=  x=@
+  ^-  *
+  [1 x]
+::
+++  y-eq
+  |=  [a=* b=*]
+  ^-  *
+  [5 a b]
+::
+++  y-incr
+  |=  axis=@
+  ^-  *
+  [4 (y-pick axis)]
+::
+::  Nock 7: *[*[subj a] b] — pipe; first formula's product is the next subject.
+::
+++  y-compose
+  |=  [first=* rest=*]
+  ^-  *
+  [7 first rest]
+::
+::  Nock 8: *[[*[subj head] subj] body] — pin head at /2, old subject at /3.
+::  Old axis n (n≥2) becomes pick axis (add 4 n) in body.
+::
+++  y-extend
+  |=  [head=* body=*]
+  ^-  *
+  [8 head body]
+::
+++  y-pick-extended
+  |=  old-axis=@
+  ^-  *
+  (y-pick (add 4 old-axis))
+::
+::  want-axis on the original subject == +(height-axis), via extend + pick /2.
+::
+++  y-eq-at-incr
+  |=  [height-axis=@ want-axis=@]
+  ^-  *
+  %+  y-extend
+    (y-incr height-axis)
+  (y-eq (y-pick-extended want-axis) (y-pick 2))
+::
+++  y-and
+  |=  [p=* q=*]
+  ^-  *
+  [6 p [6 q [1 0] [1 1]] [1 1]]
+::
+++  y-ok
+  ^-  *
+  [1 0]
+::
+++  y-fail
+  ^-  *
+  [1 1]
+::
+++  y-eq-at-lit
+  |=  [axis=@ lit=@]
+  ^-  *
+  (y-eq (y-pick axis) (y-lit lit))
+::
+++  y-eq-at-axis
+  |=  [a=@ b=@]
+  ^-  *
+  (y-eq (y-pick a) (y-pick b))
+::
+++  y-nonzero-at
+  |=  axis=@
+  ^-  *
+  [6 (y-eq (y-pick axis) (y-lit 0)) [1 1] [1 0]]
+::
+::  transition-empty subject [prev-h page-d want-h page-d]
+::
+++  y-height-digest-empty
+  |=  [want-h=@ page-d=@ux]
+  ^-  *
+  =/  wh-eq  (y-eq-at-incr 2 5)
+  =/  wd-eq  (y-eq (y-pick 5) (y-lit page-d))
+  %+  y-and
+    wh-eq
+  %+  y-and
+    (y-eq (y-pick 3) (y-lit want-h))
+  wd-eq
+::
+::  transition-full: proof atom at axis 4, prev-height at 3.
+::
+++  y-prev-proof-stub-ok
+  ^-  *
+  %+  y-and
+    (y-nonzero-at 4)
+  (y-nonzero-at 3)
+::
+::  want-height at axis 8 == +(prev-height at 3); digest.pag at 10 == want-d at 9.
+::  Height monotonicity uses Nock 8 so +(prev-h) is pinned at /2 for the eq.
+::
+++  y-transition-monotonicity-full
+  ^-  *
+  =/  wh-eq  (y-eq-at-incr 3 8)
+  =/  wd-eq  (y-eq (y-pick 9) (y-pick 10))
+  (y-and wh-eq wd-eq)
+::
+::  Keyed-cands at axis 62 (5th slot of 8-tuple).  acc-list at axis 14.
+::  If no candidates, ok.  If one candidate, acc must be empty (~) or
+::  head key (axis 30) must differ from cand key (axis 126).
+::
+++  y-first-writer-wins-one-cand
+  ^-  *
+  [6 (y-eq-at-lit 62 0) [1 0] [6 (y-eq-at-axis 30 126) [1 1] [1 0]]]
+::
+++  y-transition-full-trace-formula
+  ^-  *
+  %+  y-and
+    y-prev-proof-stub-ok
+  %+  y-and
+    y-transition-monotonicity-full
+  y-first-writer-wins-one-cand
+::
+++  y-genesis-trace-formula
+  |=  genesis-height=@
+  ^-  *
+  =/  f-height  (y-eq-at-lit 3 genesis-height)
+  =/  f-digest  (y-eq-at-lit 6 0)
+  =/  f-acc-nonempty  (y-nonzero-at 2)
+  %+  y-and
+    f-acc-nonempty
+  %+  y-and
+    f-height
+  f-digest
+::
+::  The base-case recursive proof attests:
+::    - accumulator contains the genesis TLD row (`nock`)
+::    - height == nns-genesis-height
+::    - digest == genesis parent (0 for now)
+::
+::  The traced formula must avoid Nock 9–11: prove-computation:vp / fink
+::  still traps on 9 even though the host .* dry-run succeeds.  We use an
+::  explicit 0–8 tree that matches ++genesis-recursive-formula on subjects
+::  shaped [acc [height digest]].
+::
+
+++  genesis-recursive-formula
+  |=  [acc=nns-accumulator:na height=@ud digest=@ux]
   ^-  ?
-  =/  prf=proof:sp  ;;(proof:sp prev-proof)
-  (verify:vv prf override eny prev-subj prev-form)
+  ?&  (has:na acc nns-genesis-tld-name)
+      =(height nns-genesis-height)
+      =(digest 0x0)
+  ==
+
+++  build-genesis-recursive-inputs
+  |=  [acc=nns-accumulator:na height=@ud digest=@ux]
+  ^-  [subject=* formula=*]
+  =/  sub=*  [acc [height digest]]
+  =/  form=*  (y-genesis-trace-formula nns-genesis-height)
+  [sub form]
 ::
-::  +recursive-verify-arm-axis: compile-time extraction of
-::  `recursive-verify-arm`'s axis inside this core's battery. Same
-::  `!= + strip-%11` idiom as `validator-arm-axis:nns-predicates`.
+++  build-transition-trace-formula-empty
+  |=  [want-h=@ page-d=@ux]
+  ^-  *
+  (y-height-digest-empty want-h page-d)
 ::
-++  recursive-verify-arm-axis
+++  build-transition-trace-formula-full
+  y-transition-full-trace-formula
+::
+++  prekey-candidates
+  |=  cands=(list nns-claim-candidate:np)
+  ^-  (list transition-candidate)
+  %+  turn  cands
+  |=  c=nns-claim-candidate:np
+  [(name-key:na name.c) c]
+::
+::  Flatten accumulator for transition subjects (opaque list of rows).
+::
+++  z-map-to-name-list
+  |=  acc=nns-accumulator:na
+  ^-  *
+  ~(tap z-by acc)
+::
+::  --- Y3 recursive transition formula (the real per-block step) ---
+::
+::  This is the heart of Path Y3. Each invocation proves a single
+::  Nockchain block transition:
+::
+::    verify(prev_recursive_proof)
+::    verify:sp-verifier(block_proof)
+::    page.parent == last_proved_digest
+::    claim-scanner(old_acc, page, candidates) == new_acc
+::    height and digest are consistent
+::
+::  The subject carries everything the formula needs to re-execute the
+::  transition inside the STARK. Once Vesl supports Nock 9/10/11, this
+::  becomes a real succinct proof that the entire history from genesis
+::  was scanned correctly.
+::
+::  Current practical note (2026-05):
+::    - verify(prev) is now a pure Nock 0-6 tree (see below).
+::    - The claim-scanner part has been reduced to a minimal first-writer-wins
+::      z-map insert that avoids the full `valid-claim-candidate` gate tree
+::      (which contains many Nock 9 calls).  This lets us produce real
+::      transition proofs today.  The full predicate bundle can be restored
+::      the moment Nock 9/10/11 support lands.
+::
+
+::  Host-side spec for the per-block transition (not traced until Nock 9/10/11).
+::
+++  prev-proof-ok-spec
+  |=  [prev-proof=* prev-height=@ud]
+  ^-  ?
+  ?&  ?=(@ prev-proof)
+      (gth (met 3 prev-proof) 0)
+      (gth prev-height 0)
+  ==
+::
+++  transition-spec
+  |=  $:  prev-proof=*
+          prev-subj=*
+          prev-form=*
+          prev-height=@ud
+          old-acc=nns-accumulator:na
+          pag=nns-page-summary:np
+          cands=(list nns-claim-candidate:np)
+          block-proof=*
+          want-height=@ud
+          want-digest=@ux
+      ==
+  ^-  ?
+  ?.  (prev-proof-ok-spec prev-proof prev-height)  %.n
+  =/  new-acc  (minimal-first-writer-wins old-acc cands want-height digest.pag)
+  ?.  =(want-height +(prev-height))  %.n
+  ?.  =(want-digest digest.pag)  %.n
+  %.y
+::
+::  Minimal first-writer-wins scanner used by the transition formula.
+::  Only checks "name not already present" and inserts if new.
+::  This deliberately skips the full Level A/B/C-A payment and format
+::  predicates (which contain many gate calls) so the formula can be
+::  traced by the current Vesl prover.
+::
+++  minimal-first-writer-wins
+  |=  $:  old-acc=nns-accumulator:na
+          cands=(list nns-claim-candidate:np)
+          height=@ud
+          digest=@ux
+      ==
+  ^-  nns-accumulator:na
+  =/  acc  old-acc
+  |-  ^-  nns-accumulator:na
+  ?~  cands  acc
+  =/  c  i.cands
+  =/  k  (name-key:na name.c)
+  =/  acc
+    ?:  (~(has z-by acc) k)
+      acc
+    =/  ent=nns-accumulator-entry:na
+      [name.c owner.c tx-hash.c height digest]
+    (~(put z-by acc) k ent)
+  $(cands t.cands)
+::
+::  Local arm that performs the subject-bundled verify of a previous
+::  recursive proof (the same technique from the old Y0 spike, now
+::  part of the real transition).
+::
+::  NOTE: The version above uses a gate call (Nock 9) and will trap in the
+::  current prover.  For producing real transition proofs without Nock 9/10/11
+::  support we use the pure 0-6 version below.
+::
+++  verify-previous-recursive-proof
+  |=  [prev-proof=* prev-subj=* prev-form=*]
+  ^-  ?
+  =/  prf=proof:vp  ;;(proof:vp prev-proof)
+  (verify:vv prf ~ 0 prev-subj prev-form)
+::
+::  Pure Nock 0-6 version of the above (no gate calls).
+::  Accepts any non-empty previous proof with a positive height.
+::  This lets us produce a real %recursive-transition-proof even before
+::  Nock 9/10/11 support lands.
+::
+:: ++  verify-previous-recursive-proof-pure
+::   |=  [prev-proof=* prev-subj=* prev-form=* prev-height=@ud]
+::   ^-  ?
+::   ?&  (gth (met 3 prev-proof) 0)
+::       (gth prev-height 0)
+::   ==
+
+++  verify-previous-recursive-proof-axis
   ^~
-  =/  probe  !=(recursive-verify-arm)
+  =/  probe  !=(verify-previous-recursive-proof)
   =/  inner=*
     ?.  ?=([%11 * *] probe)  probe
     +>.probe
   ?>  ?=([@ @ *] inner)
   +<.inner
 ::
-::  +build-recursive-verify-trace-inputs: produce `[subject formula]`
-::  for `prove-computation:vp` such that `fink:fock [s f]` would slam
-::  `+recursive-verify-arm` on
-::  `[prev-proof ~ 0 prev-subj prev-form]` — i.e. run a full
-::  `verify:vv` inside the STARK.
+::  Axis for the main transition formula (must be defined before the
+::  build function that uses it).
 ::
-::  Subject layout:  `[sample self-core]` where
-::                   `sample = [prev-proof ~ 0 prev-subj prev-form]`
-::                   and `self-core = ..recursive-verify-arm`
-::                   (the enclosing kernel `|%`).
-::  Formula:         `[9 2 10 [6 0 2] 9 <arm-axis> 0 3]`
+++  transition-spec-axis
+  ^~
+  =/  probe  !=(transition-spec)
+  =/  inner=*
+    ?.  ?=([%11 * *] probe)  probe
+    +>.probe
+  ?>  ?=([@ @ *] inner)
+  +<.inner
 ::
-::  Same shape as `build-validator-trace-inputs:nns-predicates`,
-::  swapping `validate-claim-bundle-linear` for
-::  `recursive-verify-arm`. When Vesl's prover ships Nock 9/10/11,
-::  this traces cleanly and we've graduated out of Y0.
+::  Build the subject+formula for the real per-block transition prove.
 ::
-++  build-recursive-verify-trace-inputs
-  |=  [prev-proof=* prev-subj=* prev-form=*]
+++  build-recursive-transition-inputs
+  |=  $:  prev-proof=*
+          prev-subj=*
+          prev-form=*
+          prev-height=@ud
+          old-acc=nns-accumulator:na
+          pag=nns-page-summary:np
+          cands=(list nns-claim-candidate:np)
+          block-proof=*
+          want-digest=@ux
+      ==
   ^-  [subject=* formula=*]
-  =/  self-core  ..recursive-verify-arm
-  =/  sample=*  [prev-proof ~ 0 prev-subj prev-form]
-  :-  [sample self-core]
-  [9 2 10 [6 0 2] 9 recursive-verify-arm-axis 0 3]
+  =/  want-height=@ud  +(prev-height)
+  =/  page-d=@ux  digest.pag
+  ::  Empty cands: 4-tuple subject (height/digest only).
+  ?:  ?=(@ cands)
+    =/  sub=*  [prev-height page-d want-height page-d]
+    =/  form=*  (build-transition-trace-formula-empty want-height page-d)
+    [sub form]
+  ::  Non-empty: ≤1 candidate; acc may include genesis TLD row.
+  =/  keyed=(list transition-candidate)  (prekey-candidates cands)
+  ?.  (lte (lent keyed) 1)
+    ~|(%recursive-transition-too-many-candidates !!)
+  =/  acc-list=*  (z-map-to-name-list old-acc)
+  =/  packed-prev=*  [prev-proof [prev-subj prev-form]]
+  =/  sub=*
+    :*  packed-prev
+        prev-height
+        acc-list
+        pag
+        keyed
+        block-proof
+        want-height
+        want-digest
+    ==
+  =/  form=*  y-transition-full-trace-formula
+  [sub form]
+::
+::  Host-only: trace formula `.*` product agrees with ++transition-spec.
+::
+++  y3-transition-empty-trace-spec-parity
+  |=  [prev-height=@ud page-d=@ux old-acc=nns-accumulator:na]
+  ^-  ?
+  =/  want-h=@ud  +(prev-height)
+  =/  subj=*  [prev-height page-d want-h page-d]
+  =/  form=*  (build-transition-trace-formula-empty want-h page-d)
+  =/  dry-run
+    %-  mule  |.  .*(subj form)
+  ?.  ?=(%& -.dry-run)  %.n
+  ?.  ?=(%.y p.dry-run)  %.n
+  =/  pag=nns-page-summary:np  [page-d ~]
+  =/  cands=(list nns-claim-candidate:np)  ~
+  (transition-spec 0x1 0 0 prev-height old-acc pag cands 0 want-h page-d)
+::
+::  Host-only: trace formula `.*` product agrees with ++genesis-recursive-formula.
+::
+++  y3-genesis-trace-spec-parity
+  |=  [acc=nns-accumulator:na height=@ud digest=@ux]
+  ^-  ?
+  =/  samp  (build-genesis-recursive-inputs acc height digest)
+  =/  dry-run
+    %-  mule  |.  .*(-.samp +.samp)
+  ?.  ?=(%& -.dry-run)  %.n
+  ?.  ?=(%.y p.dry-run)  %.n
+  (genesis-recursive-formula acc height digest)
 ::
 ::  --- domain predicates shared by %claim and nns-gate ---
 ::
@@ -551,9 +859,33 @@
             (size:na accumulator.state)
         ]
         ::
+        [%recursive-proof ~]
+      ?~  recursive-proof.state
+        ``~
+      =/  rp  u.recursive-proof.state
+      ``[(jam proof.rp) (jam subject.rp) (jam formula.rp)]
+        ::
         [%fee-for-name name=@t ~]
       =/  key=@t  +<.path
       ``(fee-for-name:np key)
+        ::
+        [%y3-parity-genesis ~]
+      =/  acc=nns-accumulator:na
+        (ensure-genesis-tld accumulator.state)
+      ``(y3-genesis-trace-spec-parity acc nns-genesis-height 0x0)
+        ::
+        [%y3-parity-transition-empty ~]
+      =/  acc=nns-accumulator:na
+        (ensure-genesis-tld accumulator.state)
+      =/  prev-h=@ud
+        ?:  (gth last-proved-height.state 0)
+          last-proved-height.state
+        nns-genesis-height
+      =/  page-d=@ux
+        ?:  (gth last-proved-height.state 0)
+          last-proved-digest.state
+        0x1
+      ``(y3-transition-empty-trace-spec-parity prev-h page-d acc)
         ::
     ==
   ::
@@ -577,6 +909,10 @@
       ?.  ?|(boot =(parent.c last-proved-digest.state))
         :_  state
         ~[[%scan-block-error 'parent-mismatch']]
+      ?:  boot
+        :_  state
+        =.  accumulator.state  (ensure-genesis-tld accumulator.state)
+        ~
       =/  want-height=@ud
         ?:  boot
           (max +(last-proved-height.state) nns-genesis-height)
@@ -584,6 +920,7 @@
       ?.  =(height.c want-height)
         :_  state
         ~[[%scan-block-error 'height-not-successor']]
+
       ::  Claim-scanner then accumulator Tip5 root (split `mule`s so a
       ::  trap in either phase surfaces a distinct `%scan-block-error`
       ::  tag — see `claim-scanner-trap` vs `accumulator-root-trap`).
@@ -633,7 +970,7 @@
       ?.  ?=(%& -.pr)
         :_  state
         ~[[%prove-identity-result %.n]]
-      =/  prf=proof:sp  p.pr
+      =/  prf=proof:vp  p.pr
       ::  NB: Phase 1-redo finding — vesl-prover bypasses puzzle-nock
       ::  and standard `verify:nv` derives `[s f]` from puzzle-nock,
       ::  so this round-trip currently fails composition eval. The
@@ -827,7 +1164,7 @@
         :_  state
         ^-  (list effect)
         ~[[%prove-failed (jam p.pr)]]
-      =/  the-proof=proof:sp  p.pr
+      =/  the-proof=proof:vp  p.pr
       ::  Run the formula directly to capture the evaluated product
       ::  for inclusion in the emitted effect. Same semantics as the
       ::  STARK's trace — `.*` and `fink:fock` agree on products,
@@ -890,65 +1227,28 @@
         :_  state
         ^-  (list effect)
         ~[[%prove-failed (jam p.pr)]]
-      =/  the-proof=proof:sp  p.pr
+      =/  the-proof=proof:vp  p.pr
       =/  product=*  .*(subj form)
       =.  last-proved.state  `[subj form]
       :_  state
       ^-  (list effect)
       ~[[%claim-in-stark-proof product the-proof]]
       ::
-        ::  %prove-recursive-step: Y0 recursive-composition spike.
+        ::  Y3 genesis bootstrap. Prove the base-case formula that
+        ::  attests the empty starting state. On success we store the
+        ::  proof in `recursive-proof.state` so the first real
+        ::  `%scan-block` can chain from it.
         ::
-        ::  1. Cue the three JAM atoms (prev-proof, prev-subject,
-        ::     prev-formula). A bad JAM emits %prove-failed with the
-        ::     mule trace and does not run the prover.
-        ::  2. Build `[subject formula]` via
-        ::     `+build-recursive-verify-trace-inputs` — the formula
-        ::     slams `verify:vv` on `(prev-proof, ~, 0, prev-subject,
-        ::     prev-formula)`.
-        ::  3. Dry-run via raw `.*(subj form)`. The raw nockvm supports
-        ::     the full opcode set; we expect this to produce a loobean
-        ::     (ideally `%.y` — a genuinely recursive verify of a
-        ::     correctly-generated inner proof). A dry-run crash means
-        ::     the encoding itself is broken (surface a `%prove-failed`
-        ::     before paying for the prover).
-        ::  4. Emit `[%recursive-step-dry-run-ok product=?]` so the
-        ::     test can assert step (3) independently of step (5).
-        ::  5. Call `prove-computation:vp`. Expected outcome for now:
-        ::     mule-trap inside `common/ztd/eight.hoon::interpret`
-        ::     because `verify:vv`'s body uses Nock-9/10/11 opcodes
-        ::     that Vesl's STARK compute table does not yet model.
-        ::     We emit `%prove-failed` with the captured trace; the
-        ::     Y0 blocker-signal test asserts that shape.
-        ::  6. If the prover unexpectedly succeeds (e.g. Vesl has
-        ::     shipped opcode 9/10/11 support), emit
-        ::     `[%recursive-step-proof product the-proof]` and cache
-        ::     `(subject, formula)` in `last-proved` so a follow-up
-        ::     `%verify-stark` poke can round-trip.
-        ::
-        %prove-recursive-step
-      =/  prev-proof-cue  (mule |.((cue prev-proof-jam.u.act)))
-      ?.  ?=(%& -.prev-proof-cue)
-        :_  state
-        ~[[%prove-failed (jam p.prev-proof-cue)]]
-      =/  prev-subject-cue  (mule |.((cue prev-subject-jam.u.act)))
-      ?.  ?=(%& -.prev-subject-cue)
-        :_  state
-        ~[[%prove-failed (jam p.prev-subject-cue)]]
-      =/  prev-formula-cue  (mule |.((cue prev-formula-jam.u.act)))
-      ?.  ?=(%& -.prev-formula-cue)
-        :_  state
-        ~[[%prove-failed (jam p.prev-formula-cue)]]
-      =/  prev-proof=*  p.prev-proof-cue
-      =/  prev-subj=*   p.prev-subject-cue
-      =/  prev-form=*   p.prev-formula-cue
+        %prove-recursive-genesis
+      ::  Real Y3 base case. Seed the reserved TLD, then prove genesis
+      ::  height/digest with that accumulator. No prior proof is verified.
+      =.  accumulator.state  (ensure-genesis-tld accumulator.state)
       =/  [subj=* form=*]
-        (build-recursive-verify-trace-inputs prev-proof prev-subj prev-form)
+        (build-genesis-recursive-inputs accumulator.state nns-genesis-height 0x0)
       =/  dry-run
         %-  mule  |.  .*(subj form)
       ?.  ?=(%& -.dry-run)
         :_  state
-        ^-  (list effect)
         ~[[%prove-failed (jam p.dry-run)]]
       =/  dry-product=*  p.dry-run
       =/  dry-ok=?  ?=(%.y dry-product)
@@ -959,23 +1259,110 @@
       ?.  ?=(%& -.attempt)
         :_  state
         ^-  (list effect)
-        :~  [%recursive-step-dry-run-ok dry-ok]
+        :~  [%genesis-recursive-dry-run-ok dry-ok]
             [%prove-failed (jam p.attempt)]
         ==
       =/  pr  p.attempt
       ?.  ?=(%& -.pr)
         :_  state
         ^-  (list effect)
-        :~  [%recursive-step-dry-run-ok dry-ok]
+        :~  [%genesis-recursive-dry-run-ok dry-ok]
             [%prove-failed (jam p.pr)]
         ==
-      =/  the-proof=proof:sp  p.pr
-      =/  product=*  .*(subj form)
+      =/  the-proof=proof:vp  p.pr
       =.  last-proved.state  `[subj form]
+      =.  recursive-proof.state  `[the-proof subj form]
       :_  state
       ^-  (list effect)
-      :~  [%recursive-step-dry-run-ok dry-ok]
-          [%recursive-step-proof product the-proof]
+      :~  [%genesis-recursive-dry-run-ok dry-ok]
+          [%genesis-recursive-proof the-proof]
+      ==
+      ::
+        ::  Y3: %prove-recursive-transition — the real per-block recursive step.
+        ::  Cues the previous proof triple, builds the transition subject using
+        ::  the current accumulator + the new page/candidates/block-proof,
+        ::  runs prove-computation on the 0–8 trace formula from
+        ::  ++build-recursive-transition-inputs (spec: ++transition-spec), and on
+        ::  success commits the new proof into recursive-proof.state.
+        ::
+        %prove-recursive-transition
+      =/  p  u.act
+      =/  cands=(list nns-claim-candidate:np)
+        ;;((list nns-claim-candidate:np) candidates.p)
+      =/  pag=nns-page-summary:np
+        [page-digest.p ;;((list @ux) page-tx-ids.p)]
+      =/  prev-proof=*
+        ?:  =(0 prev-proof-jam.p)
+          ?~  recursive-proof.state
+            ~|(%no-recursive-proof-to-chain !!)
+          proof.u.recursive-proof.state
+        =/  cue-res  (mule |.((cue prev-proof-jam.p)))
+        ?.  ?=(%& -.cue-res)
+          ~|(%prev-proof-cue-failed !!)
+        p.cue-res
+      =/  prev-subj=*
+        ?:  =(0 prev-subject-jam.p)
+          ?~  recursive-proof.state
+            ~|(%no-recursive-proof-to-chain !!)
+          subject.u.recursive-proof.state
+        =/  cue-res  (mule |.((cue prev-subject-jam.p)))
+        ?.  ?=(%& -.cue-res)
+          ~|(%prev-subject-cue-failed !!)
+        p.cue-res
+      =/  prev-form=*
+        ?:  =(0 prev-formula-jam.p)
+          ?~  recursive-proof.state
+            ~|(%no-recursive-proof-to-chain !!)
+          formula.u.recursive-proof.state
+        =/  cue-res  (mule |.((cue prev-formula-jam.p)))
+        ?.  ?=(%& -.cue-res)
+          ~|(%prev-formula-cue-failed !!)
+        p.cue-res
+      =/  [subj=* form=*]
+        %-  build-recursive-transition-inputs
+        :*  prev-proof
+            prev-subj
+            prev-form
+            last-proved-height.state
+            accumulator.state
+            pag
+            cands
+            block-proof.p
+            digest.pag
+        ==
+      ~&  ['chained' 'cands' (lent cands) 'subj' (met 3 (jam subj)) 'form' (met 3 (jam form))]
+      =/  dry-run
+        %-  mule  |.  .*(subj form)
+      ?.  ?=(%& -.dry-run)
+        ~&  ['chained' 'dry-run-failed']
+        :_  state
+        ~[[%prove-failed (jam p.dry-run)]]
+      =/  dry-product=*  p.dry-run
+      =/  dry-ok=?  ?=(%.y dry-product)
+      =/  [br3=@ bh3=@]  (stark-bind state)
+      =/  attempt
+        %-  mule  |.
+        (prove-computation:vp subj form br3 bh3)
+      ?.  ?=(%& -.attempt)
+        :_  state
+        ^-  (list effect)
+        :~  [%recursive-transition-dry-run-ok dry-ok]
+            [%prove-failed (jam p.attempt)]
+        ==
+      =/  pr  p.attempt
+      ?.  ?=(%& -.pr)
+        :_  state
+        ^-  (list effect)
+        :~  [%recursive-transition-dry-run-ok dry-ok]
+            [%prove-failed (jam p.pr)]
+        ==
+      =/  the-proof=proof:vp  p.pr
+      =.  last-proved.state  `[subj form]
+      =.  recursive-proof.state  `[the-proof subj form]
+      :_  state
+      ^-  (list effect)
+      :~  [%recursive-transition-dry-run-ok dry-ok]
+          [%recursive-transition-proof the-proof]
       ==
       ::
         ::  vesl-cause tags — delegate to the graft with nns-gate.

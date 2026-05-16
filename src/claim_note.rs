@@ -13,6 +13,8 @@ use nock_noun_rs::{cue_from_bytes, jam_to_bytes, make_cord, new_stack, T};
 use nockchain_client_rs::{find_entry, find_opaque_bytes_entry, NoteData};
 use serde::{Deserialize, Serialize};
 
+use crate::noun_access::ScopedNoun;
+
 /// Programmatic claim payload (`wallet-tx-builder` / gRPC `NoteDataEntry.key`).
 pub const CLAIM_NOTE_BLOB_ENTRY_KEY: &str = "blob";
 
@@ -96,47 +98,35 @@ impl ClaimNoteV1 {
         let mut stack = new_stack();
         let tuple = cue_from_bytes(&mut stack, &tuple_jam)
             .ok_or_else(|| "failed to decode claim tuple".to_string())?;
-        let c1 = tuple
-            .as_cell()
+        let root = ScopedNoun::from_stack(&stack, tuple);
+        let (name_sn, rest) = root
+            .uncons()
             .map_err(|_| "claim tuple malformed (slot 1)".to_string())?;
-        let name = c1.head();
-        let c2 = c1
-            .tail()
-            .as_cell()
+        let (owner_sn, tx_hash_sn) = rest
+            .uncons()
             .map_err(|_| "claim tuple malformed (slot 2)".to_string())?;
-        let owner = c2.head();
-        let tx_hash = c2.tail();
 
         Ok(Self {
-            name: cord_field(name)?,
-            owner: cord_field(owner)?,
-            tx_hash: cord_field(tx_hash)?,
+            name: cord_field(&name_sn)?,
+            owner: cord_field(&owner_sn)?,
+            tx_hash: cord_field(&tx_hash_sn)?,
         })
     }
 }
 
 /// Cord (`@t`) fields are atoms; some encoders terminate the last field as `[atom ~]`.
-fn cord_field(noun: nockvm::noun::Noun) -> Result<String, String> {
-    let leaf = if let Ok(_a) = noun.as_atom() {
-        noun
-    } else if let Ok(c) = noun.as_cell() {
-        let zero_tail = c
-            .tail()
-            .as_atom()
-            .map(|a| a.as_u64() == Ok(0))
-            .unwrap_or(false);
+fn cord_field(sn: &ScopedNoun<'_>) -> Result<String, String> {
+    let leaf = if sn.is_atom() {
+        sn.clone()
+    } else {
+        let (head, tail) = sn.uncons()?;
+        let zero_tail = tail.as_u64_opt() == Some(0);
         if !zero_tail {
             return Err("claim tuple field is not an atom".to_string());
         }
-        c.head()
-    } else {
-        return Err("claim tuple field is not an atom".to_string());
+        head
     };
-    let atom = leaf
-        .as_atom()
-        .map_err(|_| "claim tuple field is not an atom".to_string())?;
-    std::str::from_utf8(atom.as_ne_bytes())
-        .map(|s| s.trim_end_matches('\0').to_string())
+    leaf.as_cord()
         .map_err(|e| format!("claim tuple field is not utf8: {e}"))
 }
 

@@ -39,7 +39,8 @@ pub fn unpack_wallet_blob_jam(jam: &[u8]) -> Result<Vec<u8>, String> {
     let mut stack = NockStack::new(NOCK_STACK_SIZE, 0);
     let noun = Noun::cue_bytes_slice(&mut stack, jam)
         .map_err(|e| format!("cue blob jam: {e}"))?;
-    let belts = Vec::<Belt>::from_noun(&noun)
+    let space = stack.noun_space();
+    let belts = Vec::<Belt>::from_noun(&noun, &space)
         .map_err(|e| format!("blob belt list noun: {e}"))?;
     decode_len_prefixed_blob(&belts)
         .ok_or_else(|| "invalid length-prefixed packed blob".to_string())

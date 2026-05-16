@@ -10,7 +10,7 @@ use nockapp::NockApp;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    nns_vesl::prepare_tracy_for_host_cpu();
+    nns_vesl::apply_nns_config();
 
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
@@ -20,8 +20,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     cli.stack_size = nockapp::kernel::boot::NockStackSize::Large;
     boot::init_default_tracing(&cli);
 
-    // --- Load settlement + NNS config from vesl.toml ---
-    let toml_path = std::env::var("VESL_TOML").unwrap_or_else(|_| "vesl.toml".into());
+    // --- Load settlement + NNS config from nns.toml ---
+    let toml_path = std::env::var("NNS_CONFIG").unwrap_or_else(|_| "nns.toml".into());
     let toml_cfg = load_toml(&PathBuf::from(&toml_path));
     let settlement_toml = toml_cfg.settlement_toml();
     let settlement = vesl_core::SettlementConfig::resolve(
@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // --- Boot the kernel ---
-    let kernel_path = std::env::var("NNS_KERNEL_JAM").unwrap_or_else(|_| "out.jam".into());
+    let kernel_path = std::env::var("NNS_KERNEL_JAM").unwrap_or_else(|_| "nns.jam".into());
     let kernel = fs::read(&kernel_path)
         .map_err(|e| format!("failed to read kernel jam {kernel_path}: {e}"))?;
 

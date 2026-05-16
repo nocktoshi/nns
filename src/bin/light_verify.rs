@@ -45,7 +45,7 @@ impl Cli {
         let mut checkpoint_height: Option<u64> = None;
         let mut checkpoint_digest_hex: Option<String> = None;
         let mut kernel_jam_path =
-            std::env::var("NNS_KERNEL_JAM").unwrap_or_else(|_| "out.jam".to_string());
+            std::env::var("NNS_KERNEL_JAM").unwrap_or_else(|_| "nns.jam".to_string());
         let mut allow_empty_recursive = false;
         let mut allow_missing_z_in = false;
 
@@ -117,13 +117,13 @@ Checks (in order):
 Flags:
   --checkpoint-height <H>       Pinned canonical height.
   --checkpoint-digest-hex <HEX> Digest at that height (even-length hex, typically 40 bytes).
-  --kernel-jam <PATH>           NNS kernel JAM (default: $NNS_KERNEL_JAM or ./out.jam).
+  --kernel-jam <PATH>           NNS kernel JAM (default: $NNS_KERNEL_JAM or ./nns.jam).
   --allow-empty-recursive-proof   Accept empty / absent recursive_proof_hex (pre-Y3).
   --allow-missing-z-in-proof      Accept `value` without accumulator_snapshot_jam_hex (Y2).
   --path-y2-dev                   Sets both relax flags above.
 
 When `recursive_proof_hex` is non-empty, also supply recursive_subject_jam_hex and
-recursive_formula_jam_hex (raw proof JAM + traced nouns). Rebuild out.jam after kernel changes.
+recursive_formula_jam_hex (raw proof JAM + traced nouns). Rebuild nns.jam after kernel changes.
 
 When `value` is present, supply accumulator_snapshot_jam_hex (from GET /accumulator/:name?wallet_export=1)
 unless using --allow-missing-z-in-proof. Non-empty z_in_proof is rejected (deprecated).

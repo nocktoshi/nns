@@ -26,11 +26,19 @@
 //! **`/root/<hull>`** where applicable.
 
 use nock_noun_rs::{
-    atom_from_u64, jam_to_bytes, make_atom_in, make_cord_in, make_tag_in, new_stack, NounSlab,
+    atom_from_u64, cue_from_bytes, make_atom_in, make_cord_in, make_tag_in,
+    new_stack, NounSlab,
 };
-use nockvm::noun::{Noun, D, T};
+use nockvm::noun::{D, T};
+
+// `NounSpace` is the nockvm scope for `Noun::in_space(...)`; kept for API parity with `ScopedNoun`.
+#[allow(unused_imports)]
+use nockvm::noun::NounSpace;
 
 use crate::freshness::{AnchorBindingError, Freshness, FreshnessError};
+use crate::noun_access::{
+    atom_bytes_from_slab, copy_noun_to_slab, jam_bytes_from_slab, ScopedNoun,
+};
 
 // ---------------------------------------------------------------------------
 // Poke builders
@@ -101,9 +109,9 @@ pub fn prove_identity_result(effect: &NounSlab) -> Option<bool> {
     if effect_tag(effect)? != "prove-identity-result" {
         return None;
     }
-    let noun = unsafe { effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let v = cell.tail().as_atom().ok()?.as_u64().ok()?;
+    let sn = ScopedNoun::from_slab(effect);
+    let tail = sn.tail().ok()?;
+    let v = tail.as_u64().ok()?;
     Some(v == 0)
 }
 
@@ -390,9 +398,9 @@ pub fn chain_link_result(effect: &NounSlab) -> Option<bool> {
     if effect_tag(effect)? != "chain-link-result" {
         return None;
     }
-    let noun = unsafe { effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let v = cell.tail().as_atom().ok()?.as_u64().ok()?;
+    let sn = ScopedNoun::from_slab(effect);
+    let tail = sn.tail().ok()?;
+    let v = tail.as_u64().ok()?;
     Some(v == 0)
 }
 
@@ -433,9 +441,9 @@ pub fn tx_in_page_result(effect: &NounSlab) -> Option<bool> {
     if effect_tag(effect)? != "tx-in-page-result" {
         return None;
     }
-    let noun = unsafe { effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let v = cell.tail().as_atom().ok()?.as_u64().ok()?;
+    let sn = ScopedNoun::from_slab(effect);
+    let tail = sn.tail().ok()?;
+    let v = tail.as_u64().ok()?;
     Some(v == 0)
 }
 
@@ -699,11 +707,10 @@ pub fn validate_claim_result(effect: &NounSlab) -> Option<ValidateClaimResult> {
     match tag.as_str() {
         "validate-claim-ok" => Some(ValidateClaimResult::Ok),
         "validate-claim-error" => {
-            let noun = unsafe { effect.root() };
-            let cell = noun.as_cell().ok()?;
-            let atom = cell.tail().as_atom().ok()?;
-            let bytes = atom.as_ne_bytes();
-            let s = std::str::from_utf8(bytes)
+            let sn = ScopedNoun::from_slab(effect);
+            let tail = sn.tail().ok()?;
+            let bytes = tail.as_ne_bytes().ok()?;
+            let s = std::str::from_utf8(&bytes)
                 .ok()?
                 .trim_end_matches('\0')
                 .to_string();
@@ -819,13 +826,12 @@ pub fn claim_proof(effect: &NounSlab) -> Option<ClaimProof> {
     if effect_tag(effect)? != "claim-proof" {
         return None;
     }
-    let noun = unsafe { *effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let rest = cell.tail().as_cell().ok()?;
-    let bundle_digest = rest.head().as_atom().ok()?.as_ne_bytes().to_vec();
-    let proof_noun = rest.tail();
-    let mut stack = new_stack();
-    let proof_jam = jam_to_bytes(&mut stack, proof_noun);
+    let sn = ScopedNoun::from_slab(effect);
+    let rest = sn.tail().ok()?;
+    let head_noun = rest.head().ok()?.noun;
+    let proof_noun = rest.tail().ok()?.noun;
+    let bundle_digest = atom_bytes_from_slab(effect, head_noun).ok()?;
+    let proof_jam = jam_bytes_from_slab(effect, proof_noun);
     Some(ClaimProof {
         bundle_digest,
         proof_jam,
@@ -881,14 +887,12 @@ pub fn arbitrary_proof(effect: &NounSlab) -> Option<ArbitraryProof> {
     if effect_tag(effect)? != "arbitrary-proof" {
         return None;
     }
-    let noun = unsafe { *effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let rest = cell.tail().as_cell().ok()?;
-    let product_noun = rest.head();
-    let proof_noun = rest.tail();
-    let mut stack = new_stack();
-    let product_jam = jam_to_bytes(&mut stack, product_noun);
-    let proof_jam = jam_to_bytes(&mut stack, proof_noun);
+    let sn = ScopedNoun::from_slab(effect);
+    let rest = sn.tail().ok()?;
+    let product_noun = rest.head().ok()?.noun;
+    let proof_noun = rest.tail().ok()?.noun;
+    let product_jam = jam_bytes_from_slab(effect, product_noun);
+    let proof_jam = jam_bytes_from_slab(effect, proof_noun);
     Some(ArbitraryProof {
         product_jam,
         proof_jam,
@@ -992,24 +996,19 @@ pub fn claim_in_stark_proof(effect: &NounSlab) -> Option<ClaimInStarkProof> {
     if effect_tag(effect)? != "claim-in-stark-proof" {
         return None;
     }
-    let noun = unsafe { *effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let rest = cell.tail().as_cell().ok()?;
-    let product_noun = rest.head();
-    let proof_noun = rest.tail();
+    let sn = ScopedNoun::from_slab(effect);
+    let rest = sn.tail().ok()?;
+    let product_sn = rest.head().ok()?;
+    let proof_noun = rest.tail().ok()?.noun;
 
-    // Decode `(each ~ validation-error)`:
-    //   [%& 0]   -> Ok  (loobean 0 = %.y)
-    //   [%| <tag-atom>] -> Rejected(tag)
-    let product_cell = product_noun.as_cell().ok()?;
-    let tag_atom = product_cell.head().as_atom().ok()?;
-    let tag_val = tag_atom.as_u64().ok()?;
+    let tag_sn = product_sn.head().ok()?;
+    let tag_val = tag_sn.as_u64().ok()?;
     let validation = match tag_val {
         0 => InStarkValidation::Ok,
         1 => {
-            let err_atom = product_cell.tail().as_atom().ok()?;
-            let bytes = err_atom.as_ne_bytes();
-            let s = std::str::from_utf8(bytes)
+            let err_sn = product_sn.tail().ok()?;
+            let bytes = err_sn.as_ne_bytes().ok()?;
+            let s = std::str::from_utf8(&bytes)
                 .ok()?
                 .trim_end_matches('\0')
                 .to_string();
@@ -1018,8 +1017,7 @@ pub fn claim_in_stark_proof(effect: &NounSlab) -> Option<ClaimInStarkProof> {
         _ => return None,
     };
 
-    let mut stack = new_stack();
-    let proof_jam = jam_to_bytes(&mut stack, proof_noun);
+    let proof_jam = jam_bytes_from_slab(effect, proof_noun);
 
     Some(ClaimInStarkProof {
         validation,
@@ -1031,94 +1029,156 @@ pub fn first_claim_in_stark_proof(effects: &[NounSlab]) -> Option<ClaimInStarkPr
     effects.iter().find_map(claim_in_stark_proof)
 }
 
-/// Build a `[%prove-recursive-step prev-proof-jam prev-subject-jam
-/// prev-formula-jam]` poke. Y0 recursive-composition spike. See
-/// `y0_recursive_composition_spike` in `tests/prover.rs` for the
-/// call-site and expected outcome.
+/// Build a `[%prove-recursive-genesis]` poke (Y3 base case).
 ///
-/// `prev_proof_jam` / `prev_subject_jam` / `prev_formula_jam` are the
-/// JAM bytes of a previously-emitted `proof:sp`, its traced subject,
-/// and its traced formula (typically captured from an `%arbitrary-proof`
-/// effect + the caller-constructed subject/formula the prover ran on).
-///
-/// The kernel wraps `verify:vesl-stark-verifier(prev-proof, ~, 0,
-/// prev-subject, prev-formula)` in a subject-bundled-core trace and
-/// runs it through `prove-computation:vp`. Two effects come out:
-///
-///   1. `[%recursive-step-dry-run-ok ok=?]` — whether the raw nockvm
-///      accepted (`ok=%.y`) or rejected (`ok=%.n`) the recursive
-///      verification, independently of whether the STARK can trace it.
-///   2. Either `[%recursive-step-proof product proof]` (prover
-///      succeeded — recursive composition is tractable today) OR
-///      `[%prove-failed trace]` (expected outcome — Vesl's prover
-///      trapped on Nock 9/10/11 inside `verify:vv`).
-pub fn build_prove_recursive_step_poke(
-    prev_proof_jam: &[u8],
-    prev_subject_jam: &[u8],
-    prev_formula_jam: &[u8],
-) -> NounSlab {
+/// Produces the root recursive proof attesting "empty accumulator at
+/// nns-genesis-height with genesis parent digest". This proof has no
+/// prior proof to verify and is the starting point for all future
+/// incremental recursive steps.
+pub fn build_prove_recursive_genesis_poke() -> NounSlab {
     let mut slab = NounSlab::new();
-    let tag = make_tag_in(&mut slab, "prove-recursive-step");
-    let proof = make_atom_in(&mut slab, prev_proof_jam);
-    let subject = make_atom_in(&mut slab, prev_subject_jam);
-    let formula = make_atom_in(&mut slab, prev_formula_jam);
-    let poke = T(&mut slab, &[tag, proof, subject, formula]);
+    let tag = make_tag_in(&mut slab, "prove-recursive-genesis");
+    let poke = T(&mut slab, &[tag, D(0)]);
     slab.set_root(poke);
     slab
 }
 
-/// Payload of `[%recursive-step-proof product proof]` emitted by
-/// `%prove-recursive-step` on a *successful* recursive-composition
-/// prove. Seeing this in a test is the go-signal for Path Y step Y3.
+/// Build a `[%prove-recursive-transition ...]` poke (Y3 per-block step).
+///
+/// Noun cell order matches the Hoon cause mold:
+/// `[%prove-recursive-transition prev-proof-jam=@ prev-subject-jam=@
+///  prev-formula-jam=@ page-digest=@ux page-tx-ids=* candidates=* block-proof=*]`
+///
+/// The kernel passes those JAMs (after `cue`) into `build-recursive-transition-inputs`
+/// as `prev-proof`, `prev-subj`, `prev-form`, together with `accumulator.state`,
+/// `pag`, `cands`, `block-proof`, `last-proved-height`, and `+(last-proved-height)` /
+/// `page-digest` as want-height / want-digest.
+///
+/// When all three `prev-*-jam` atoms are empty, the handler reads the prior triple
+/// from `recursive-proof.state` instead (e.g. right after `%prove-recursive-genesis`).
+pub fn build_prove_recursive_transition_poke(
+    prev_proof_jam: &[u8],
+    prev_subject_jam: &[u8],
+    prev_formula_jam: &[u8],
+    page_digest: &[u8],
+    page_tx_ids: &[Vec<u8>],
+    candidates: &[ClaimCandidate],
+    block_proof: &[u8], // jammed sp proof for now
+) -> NounSlab {
+    let mut slab = NounSlab::new();
+    let tag = make_tag_in(&mut slab, "prove-recursive-transition");
+    let p_proof = make_atom_in(&mut slab, prev_proof_jam);
+    let p_subj = make_atom_in(&mut slab, prev_subject_jam);
+    let p_form = make_atom_in(&mut slab, prev_formula_jam);
+    let pg_digest = make_atom_in(&mut slab, page_digest);
+    let block_p = make_atom_in(&mut slab, block_proof);
+
+    // tx-ids list
+    let mut tx_ids_list = D(0);
+    for id in page_tx_ids.iter().rev() {
+        let tx_id = make_atom_in(&mut slab, id);
+        tx_ids_list = T(&mut slab, &[tx_id, tx_ids_list]);
+    }
+
+    // candidates list (reuse the same encoding as scan-block)
+    let mut cands_list = D(0);
+    for c in candidates.iter().rev() {
+        assert_eq!(
+            c.tx_hash.len(),
+            40,
+            "claim tx-hash must be 40 bytes (Tip5); kernel ++atom-to-tx-id expects this width"
+        );
+        assert_eq!(
+            c.witness.tx_id.len(),
+            40,
+            "witness tx-id must be 40 bytes for kernel nns-claim-candidate shape"
+        );
+        let name = make_cord_in(&mut slab, &c.name);
+        let owner = make_cord_in(&mut slab, &c.owner);
+        let fee = atom_from_u64(&mut slab, c.fee);
+        let tx_hash = make_atom_in(&mut slab, &c.tx_hash);
+        let w_tx_id = make_atom_in(&mut slab, &c.witness.tx_id);
+        let w_spender = make_atom_in(&mut slab, &c.witness.spender_pkh);
+        let w_amount = atom_from_u64(&mut slab, c.witness.treasury_amount);
+        let w_treasury = make_cord_in(&mut slab, &c.witness.output_lock_root);
+        let witness = T(&mut slab, &[w_tx_id, w_spender, w_amount, w_treasury]);
+        let candidate = T(&mut slab, &[name, owner, fee, tx_hash, witness]);
+        cands_list = T(&mut slab, &[candidate, cands_list]);
+    }
+
+    let poke = T(
+        &mut slab,
+        &[
+            tag, p_proof, p_subj, p_form, pg_digest, tx_ids_list, cands_list, block_p,
+        ],
+    );
+    slab.set_root(poke);
+    slab
+}
+
+/// Extract `[%genesis-recursive-proof proof]` (Y3 minimal genesis bootstrap).
+pub fn genesis_recursive_proof(effect: &NounSlab) -> Option<Vec<u8>> {
+    if effect_tag(effect)? != "genesis-recursive-proof" {
+        return None;
+    }
+    let sn = ScopedNoun::from_slab(effect);
+    let proof_noun = sn.tail().ok()?.noun;
+    Some(jam_bytes_from_slab(effect, proof_noun))
+}
+
+pub fn first_genesis_recursive_proof(effects: &[NounSlab]) -> Option<Vec<u8>> {
+    effects.iter().find_map(genesis_recursive_proof)
+}
+
+/// `ok` from `[%genesis-recursive-dry-run-ok ok=?]`.
+pub fn genesis_recursive_dry_run_ok(effect: &NounSlab) -> Option<bool> {
+    if effect_tag(effect)? != "genesis-recursive-dry-run-ok" {
+        return None;
+    }
+    let sn = ScopedNoun::from_slab(effect);
+    let ok_n = sn.tail().ok()?;
+    let ok = ok_n.as_u64().ok()?;
+    Some(ok != 0)
+}
+
+pub fn first_genesis_recursive_dry_run_ok(effects: &[NounSlab]) -> Option<bool> {
+    effects.iter().find_map(genesis_recursive_dry_run_ok)
+}
+
+// --- Y3 recursive transition proof effects ---
+
 #[derive(Debug)]
-pub struct RecursiveStepProof {
-    /// JAM of whatever the outer formula evaluated to — should be a
-    /// Hoon loobean: `%.y` = 0 (inner proof verified), `%.n` = 1.
-    pub product_jam: Vec<u8>,
-    /// JAM of the outer STARK proof (the recursive-step proof).
+pub struct RecursiveTransitionProof {
     pub proof_jam: Vec<u8>,
 }
 
-pub fn recursive_step_proof(effect: &NounSlab) -> Option<RecursiveStepProof> {
-    if effect_tag(effect)? != "recursive-step-proof" {
+pub fn recursive_transition_proof(effect: &NounSlab) -> Option<RecursiveTransitionProof> {
+    if effect_tag(effect)? != "recursive-transition-proof" {
         return None;
     }
-    let noun = unsafe { *effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let rest = cell.tail().as_cell().ok()?;
-    let product_noun = rest.head();
-    let proof_noun = rest.tail();
-    let mut stack = new_stack();
-    let product_jam = jam_to_bytes(&mut stack, product_noun);
-    let proof_jam = jam_to_bytes(&mut stack, proof_noun);
-    Some(RecursiveStepProof {
-        product_jam,
-        proof_jam,
-    })
+    let sn = ScopedNoun::from_slab(effect);
+    let proof_noun = sn.tail().ok()?.noun;
+    let proof_jam = jam_bytes_from_slab(effect, proof_noun);
+    Some(RecursiveTransitionProof { proof_jam })
 }
 
-pub fn first_recursive_step_proof(effects: &[NounSlab]) -> Option<RecursiveStepProof> {
-    effects.iter().find_map(recursive_step_proof)
+pub fn first_recursive_transition_proof(effects: &[NounSlab]) -> Option<RecursiveTransitionProof> {
+    effects.iter().find_map(recursive_transition_proof)
 }
 
-/// `ok` from `[%recursive-step-dry-run-ok ok=?]`. `true` means the raw
-/// nockvm successfully computed `verify:vv(prev-proof, ~, 0,
-/// prev-subject, prev-formula)` and it returned `%.y`. This is the
-/// encoding-level sanity gate — if dry-run is `false` we're asking
-/// the STARK to trace a trap, and the spike is invalid before we even
-/// get to the Vesl-prover question.
-pub fn recursive_step_dry_run_ok(effect: &NounSlab) -> Option<bool> {
-    if effect_tag(effect)? != "recursive-step-dry-run-ok" {
+
+pub fn recursive_transition_dry_run_ok(effect: &NounSlab) -> Option<bool> {
+    if effect_tag(effect)? != "recursive-transition-dry-run-ok" {
         return None;
     }
-    let noun = unsafe { *effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let ok_atom = cell.tail().as_atom().ok()?;
-    Some(ok_atom.as_u64().ok()? == 0)
+    let sn = ScopedNoun::from_slab(effect);
+    let ok_n = sn.tail().ok()?;
+    let ok = ok_n.as_u64().ok()?;
+    Some(ok != 0)
 }
 
-pub fn first_recursive_step_dry_run_ok(effects: &[NounSlab]) -> Option<bool> {
-    effects.iter().find_map(recursive_step_dry_run_ok)
+pub fn first_recursive_transition_dry_run_ok(effects: &[NounSlab]) -> Option<bool> {
+    effects.iter().find_map(recursive_transition_dry_run_ok)
 }
 
 // ---------------------------------------------------------------------------
@@ -1190,6 +1250,35 @@ pub fn build_accumulator_jam_peek() -> NounSlab {
     single_tag_peek("accumulator-jam")
 }
 
+/// Build `/recursive-proof ~` peek path slab (Path Y3).
+///
+/// Kernel response: `[~ ~ ~]` or `[~ ~ [proof-jam subject-jam formula-jam]]`.
+pub fn build_recursive_proof_peek() -> NounSlab {
+    single_tag_peek("recursive-proof")
+}
+
+/// `/y3-parity-genesis ~` — `.*` on the combinator genesis trace formula
+/// matches `++genesis-recursive-formula` on the canned genesis subject.
+pub fn build_y3_parity_genesis_peek() -> NounSlab {
+    single_tag_peek("y3-parity-genesis")
+}
+
+/// `/y3-parity-transition-empty ~` — empty-candidate transition trace vs
+/// `++transition-spec` on a canned 4-tuple subject.
+pub fn build_y3_parity_transition_empty_peek() -> NounSlab {
+    single_tag_peek("y3-parity-transition-empty")
+}
+
+/// Decode a Y3 parity peek (`%.y` / `%.n` as 0/1 atom).
+pub fn decode_y3_parity_bool(result: &NounSlab) -> Result<bool, String> {
+    let inner_slab = peek_unwrap_some(result)?;
+    let inner = ScopedNoun::from_slab(&inner_slab);
+    let v = inner
+        .as_u64()
+        .map_err(|_| "y3-parity peek: expected loobean atom".to_string())?;
+    Ok(v != 0)
+}
+
 /// Build `/kernel-debug ~` peek path slab.
 ///
 /// Kernel response: fixed tuple — see [`decode_kernel_debug`].
@@ -1201,55 +1290,50 @@ pub fn build_kernel_debug_peek() -> NounSlab {
 pub fn decode_kernel_debug(result: &NounSlab) -> Result<crate::types::KernelDebugResponse, String> {
     use crate::state::hex_encode;
 
-    let inner = peek_unwrap_some(result)?;
-    let (ver_n, n0) = uncons(inner)?;
+    let inner_slab = peek_unwrap_some(result)?;
+    let inner = ScopedNoun::from_slab(&inner_slab);
+    let (ver_n, n0) = inner.uncons()?;
     let ver = ver_n
-        .as_atom()
-        .map_err(|_| "kernel-debug: version not atom".to_string())?
         .as_u64()
         .map_err(|_| "kernel-debug: version not u64".to_string())?;
     if ver != 0 {
         return Err(format!("kernel-debug: unknown version {ver}"));
     }
 
-    let (h_n, n1) = uncons(n0)?;
-    let (digest_n, n2) = uncons(n1)?;
-    let (root_n, n3) = uncons(n2)?;
-    let (size_n, n4) = uncons(n3)?;
-    let (acc_list_n, n5) = uncons(n4)?;
-    let (reg_list_n, n6) = uncons(n5)?;
-    let (settled_n, lp_n) = uncons(n6)?;
+    let (h_n, n1) = n0.uncons()?;
+    let (digest_n, n2) = n1.uncons()?;
+    let (root_n, n3) = n2.uncons()?;
+    let (size_n, n4) = n3.uncons()?;
+    let (acc_list_n, n5) = n4.uncons()?;
+    let (reg_list_n, n6) = n5.uncons()?;
+    let (settled_n, lp_n) = n6.uncons()?;
 
     let last_proved_height = h_n
-        .as_atom()
-        .map_err(|_| "kernel-debug: height not atom".to_string())?
         .as_u64()
         .map_err(|_| "kernel-debug: height overflows u64".to_string())?;
-    let last_proved_digest_hex = hex_encode(&atom_to_le_bytes(digest_n)?);
-    let accumulator_root_hex = hex_encode(&atom_to_le_bytes(root_n)?);
+    let last_proved_digest_hex = hex_encode(&digest_n.as_ne_bytes()?);
+    let accumulator_root_hex = hex_encode(&root_n.as_ne_bytes()?);
     let accumulator_size = size_n
-        .as_atom()
-        .map_err(|_| "kernel-debug: size not atom".to_string())?
         .as_u64()
         .map_err(|_| "kernel-debug: size overflows u64".to_string())?;
 
     let mut names = Vec::new();
-    for row_n in hoon_list_elements(acc_list_n)? {
-        names.push(decode_kernel_debug_name_row(row_n)?);
+    for row_sn in acc_list_n.list_elements()? {
+        names.push(decode_kernel_debug_name_row(row_sn)?);
     }
 
     let mut registered = Vec::new();
-    for pair_n in hoon_list_elements(reg_list_n)? {
-        let (hull_n, root_pair_n) = uncons(pair_n)?;
+    for pair_sn in reg_list_n.list_elements()? {
+        let (hull_n, root_pair_n) = pair_sn.uncons()?;
         registered.push(crate::types::KernelDebugVeslRegistered {
-            hull_id_hex: hex_encode(&atom_to_le_bytes(hull_n)?),
-            merkle_root_hex: hex_encode(&atom_to_le_bytes(root_pair_n)?),
+            hull_id_hex: hex_encode(&hull_n.as_ne_bytes()?),
+            merkle_root_hex: hex_encode(&root_pair_n.as_ne_bytes()?),
         });
     }
 
     let mut settled_note_ids_hex = Vec::new();
-    for id_n in hoon_list_elements(settled_n)? {
-        settled_note_ids_hex.push(hex_encode(&atom_to_le_bytes(id_n)?));
+    for id_sn in settled_n.list_elements()? {
+        settled_note_ids_hex.push(hex_encode(&id_sn.as_ne_bytes()?));
     }
 
     let last_proved = decode_optional_jam_pair(lp_n)?;
@@ -1269,62 +1353,39 @@ pub fn decode_kernel_debug(result: &NounSlab) -> Result<crate::types::KernelDebu
     })
 }
 
-fn uncons(n: Noun) -> Result<(Noun, Noun), String> {
-    let c = n
-        .as_cell()
-        .map_err(|_| "kernel-debug: expected cell".to_string())?;
-    Ok((c.head(), c.tail()))
-}
-
-fn hoon_list_elements(mut n: Noun) -> Result<Vec<Noun>, String> {
-    let mut out = Vec::new();
-    loop {
-        if n.as_atom().is_ok() {
-            break;
-        }
-        let cell = n
-            .as_cell()
-            .map_err(|_| "kernel-debug: malformed list".to_string())?;
-        out.push(cell.head());
-        n = cell.tail();
-    }
-    Ok(out)
-}
-
-fn decode_kernel_debug_name_row(n: Noun) -> Result<crate::types::KernelDebugNameEntry, String> {
+fn decode_kernel_debug_name_row(sn: ScopedNoun<'_>) -> Result<crate::types::KernelDebugNameEntry, String> {
     use crate::state::hex_encode;
-    let (name_n, r1) = uncons(n)?;
-    let (owner_n, r2) = uncons(r1)?;
-    let (tx_n, r3) = uncons(r2)?;
-    let (ch_n, bd_n) = uncons(r3)?;
+    let (name_n, r1) = sn.uncons()?;
+    let (owner_n, r2) = r1.uncons()?;
+    let (tx_n, r3) = r2.uncons()?;
+    let (ch_n, bd_n) = r3.uncons()?;
     Ok(crate::types::KernelDebugNameEntry {
-        name: atom_to_cord(name_n)?,
-        owner: atom_to_cord(owner_n)?,
-        tx_hash_hex: hex_encode(&atom_to_le_bytes(tx_n)?),
+        name: name_n.as_cord()?,
+        owner: owner_n.as_cord()?,
+        tx_hash_hex: hex_encode(&tx_n.as_ne_bytes()?),
         claim_height: ch_n
-            .as_atom()
-            .map_err(|_| "kernel-debug: claim_height not atom".to_string())?
             .as_u64()
             .map_err(|_| "kernel-debug: claim_height overflows u64".to_string())?,
-        block_digest_hex: hex_encode(&atom_to_le_bytes(bd_n)?),
+        block_digest_hex: hex_encode(&bd_n.as_ne_bytes()?),
     })
 }
 
-fn decode_optional_jam_pair(n: Noun) -> Result<Option<crate::types::KernelDebugLastProved>, String> {
+fn decode_optional_jam_pair(
+    sn: ScopedNoun<'_>,
+) -> Result<Option<crate::types::KernelDebugLastProved>, String> {
     use crate::state::hex_encode;
-    if n.as_atom().is_ok() {
+    if sn.is_atom() {
         return Ok(None);
     }
-    let uc = n
-        .as_cell()
+    let (_, pair) = sn
+        .uncons()
         .map_err(|_| "kernel-debug: last_proved not unit".to_string())?;
-    let pair = uc.tail();
-    let pc = pair
-        .as_cell()
+    let (sj, fj) = pair
+        .uncons()
         .map_err(|_| "kernel-debug: last_proved inner not pair".to_string())?;
     Ok(Some(crate::types::KernelDebugLastProved {
-        subject_jam_hex: hex_encode(&atom_to_le_bytes(pc.head())?),
-        formula_jam_hex: hex_encode(&atom_to_le_bytes(pc.tail())?),
+        subject_jam_hex: hex_encode(&sj.as_ne_bytes()?),
+        formula_jam_hex: hex_encode(&fj.as_ne_bytes()?),
     }))
 }
 
@@ -1370,10 +1431,9 @@ pub fn build_fee_for_name_peek(name: &str) -> NounSlab {
 
 /// Decode the `[~ ~ @ud]` result of `/fee-for-name/<name>`.
 pub fn decode_fee_for_name(result: &NounSlab) -> Result<u64, String> {
-    let inner = peek_unwrap_some(result)?;
+    let inner_slab = peek_unwrap_some(result)?;
+    let inner = ScopedNoun::from_slab(&inner_slab);
     inner
-        .as_atom()
-        .map_err(|_| "fee-for-name: expected atom".to_string())?
         .as_u64()
         .map_err(|_| "fee-for-name: overflows u64".to_string())
 }
@@ -1415,22 +1475,21 @@ pub struct Snapshot {
 
 /// Decode the `[~ ~ claim-id hull root]` peek result for `/snapshot`.
 pub fn decode_snapshot(result: &NounSlab) -> Result<Snapshot, String> {
-    let inner = peek_unwrap_some(result)?;
-    let cell = inner
-        .as_cell()
-        .map_err(|_| "snapshot: expected cell".to_string())?;
-    let claim_id = cell
+    let inner_slab = peek_unwrap_some(result)?;
+    let inner = ScopedNoun::from_slab(&inner_slab);
+    let claim_id = inner
         .head()
-        .as_atom()
-        .map_err(|_| "snapshot: claim_id not an atom".to_string())?
+        .map_err(|_| "snapshot: expected cell".to_string())?
         .as_u64()
         .map_err(|_| "snapshot: claim_id overflows u64".to_string())?;
-    let rest = cell
+    let rest = inner
         .tail()
-        .as_cell()
         .map_err(|_| "snapshot: tail not a cell".to_string())?;
-    let hull = atom_to_le_bytes(rest.head())?;
-    let root = atom_to_le_bytes(rest.tail())?;
+    let (hull_sn, root_sn) = rest
+        .uncons()
+        .map_err(|_| "snapshot: tail not a pair".to_string())?;
+    let hull = hull_sn.as_ne_bytes()?;
+    let root = root_sn.as_ne_bytes()?;
     Ok(Snapshot {
         claim_id,
         hull,
@@ -1443,31 +1502,22 @@ pub fn decode_snapshot(result: &NounSlab) -> Result<Snapshot, String> {
 /// Returns the names (as Rust strings) in the canonical `aor` order
 /// that the kernel used when walking the `names` map.
 pub fn decode_pending_batch(result: &NounSlab) -> Result<Vec<String>, String> {
-    let inner = peek_unwrap_inner(result)?;
-    let mut out = Vec::new();
-    let mut cur = match inner {
-        None => return Ok(out),
-        Some(n) => n,
+    let Some(list_slab) = peek_unwrap_inner(result)? else {
+        return Ok(Vec::new());
     };
-    loop {
-        if cur.as_atom().is_ok() {
-            break;
-        }
-        let cell = cur
-            .as_cell()
-            .map_err(|_| "pending-batch: malformed list cell".to_string())?;
-        out.push(atom_to_cord(cell.head())?);
-        cur = cell.tail();
+    let list_sn = ScopedNoun::from_slab(&list_slab);
+    let mut out = Vec::new();
+    for sn in list_sn.list_elements()? {
+        out.push(sn.as_cord()?);
     }
     Ok(out)
 }
 
 /// Decode the `[~ ~ @ud]` peek result for `/last-settled`.
 pub fn decode_last_settled(result: &NounSlab) -> Result<u64, String> {
-    let inner = peek_unwrap_some(result)?;
+    let inner_slab = peek_unwrap_some(result)?;
+    let inner = ScopedNoun::from_slab(&inner_slab);
     inner
-        .as_atom()
-        .map_err(|_| "last-settled: expected atom".to_string())?
         .as_u64()
         .map_err(|_| "last-settled: overflows u64".to_string())
 }
@@ -1493,69 +1543,82 @@ pub struct AccumulatorEntry {
 /// Decode the `[~ ~ (unit nns-accumulator-entry)]` peek result for
 /// `/accumulator/<name>`. Returns `Ok(None)` when the name is absent.
 pub fn decode_accumulator_entry(result: &NounSlab) -> Result<Option<AccumulatorEntry>, String> {
-    let inner = peek_unwrap_some(result)?;
-    if inner.as_atom().is_ok() {
+    let inner_slab = peek_unwrap_some(result)?;
+    let inner = ScopedNoun::from_slab(&inner_slab);
+    if inner.is_atom() {
         return Ok(None);
     }
-    let unit_cell = inner
-        .as_cell()
-        .map_err(|_| "accumulator: expected (unit entry) cell".to_string())?;
-    let entry = unit_cell.tail();
-    let entry_cell = entry
-        .as_cell()
+    let entry = inner.tail()?;
+    let (name_sn, r1) = entry
+        .uncons()
         .map_err(|_| "accumulator: entry not a cell".to_string())?;
-    let name = atom_to_cord(entry_cell.head())?;
-    let rest = entry_cell
-        .tail()
-        .as_cell()
+    let (owner_sn, r2) = r1
+        .uncons()
         .map_err(|_| "accumulator: entry tail not a cell".to_string())?;
-    let owner = atom_to_cord(rest.head())?;
-    let rest = rest
-        .tail()
-        .as_cell()
+    let (tx_sn, r3) = r2
+        .uncons()
         .map_err(|_| "accumulator: entry tail2 not a cell".to_string())?;
-    let tx_hash = atom_to_le_bytes(rest.head())?;
-    let rest = rest
-        .tail()
-        .as_cell()
+    let (ch_sn, bd_sn) = r3
+        .uncons()
         .map_err(|_| "accumulator: entry tail3 not a cell".to_string())?;
-    let claim_height = rest
-        .head()
-        .as_atom()
-        .map_err(|_| "accumulator: claim_height not atom".to_string())?
-        .as_u64()
-        .map_err(|_| "accumulator: claim_height overflows u64".to_string())?;
-    let block_digest = atom_to_le_bytes(rest.tail())?;
     Ok(Some(AccumulatorEntry {
-        name,
-        owner,
-        tx_hash,
-        claim_height,
-        block_digest,
+        name: name_sn.as_cord()?,
+        owner: owner_sn.as_cord()?,
+        tx_hash: tx_sn.as_ne_bytes()?,
+        claim_height: ch_sn
+            .as_u64()
+            .map_err(|_| "accumulator: claim_height overflows u64".to_string())?,
+        block_digest: bd_sn.as_ne_bytes()?,
     }))
 }
 
 /// Decode `[~ ~ (unit @)]` from `/accumulator-proof/<name>`.
 pub fn decode_accumulator_proof_axis(result: &NounSlab) -> Result<Option<Vec<u8>>, String> {
-    let inner = peek_unwrap_some(result)?;
-    if inner.as_atom().is_ok() {
+    let inner_slab = peek_unwrap_some(result)?;
+    let inner = ScopedNoun::from_slab(&inner_slab);
+    if inner.is_atom() {
         return Ok(None);
     }
-    let unit_cell = inner
-        .as_cell()
-        .map_err(|_| "accumulator-proof: expected (unit @) cell".to_string())?;
-    Ok(Some(atom_to_le_bytes(unit_cell.tail())?))
+    let axis = inner.tail()?;
+    Ok(Some(axis.as_ne_bytes()?))
 }
 
 /// Decode `[~ ~ @]` from `/accumulator-root`.
 pub fn decode_accumulator_root(result: &NounSlab) -> Result<Vec<u8>, String> {
-    let inner = peek_unwrap_some(result)?;
-    atom_to_le_bytes(inner)
+    let inner_slab = peek_unwrap_some(result)?;
+    let inner = ScopedNoun::from_slab(&inner_slab);
+    inner.as_ne_bytes()
 }
 
 /// Decode `[~ ~ @]` from `/accumulator-jam` (JAM of the full `nns-accumulator`).
 pub fn decode_accumulator_jam(result: &NounSlab) -> Result<Vec<u8>, String> {
     decode_accumulator_root(result)
+}
+
+/// Decode `[~ ~ ~]` or `[~ ~ [proof-jam subject-jam formula-jam]]` from
+/// `/recursive-proof` (Path Y3). Returns `Ok(None)` when no recursive proof
+/// has been produced yet (Y2 semantics).
+pub fn decode_recursive_proof(
+    result: &NounSlab,
+) -> Result<Option<(Vec<u8>, Vec<u8>, Vec<u8>)>, String> {
+    let Some(inner_slab) = peek_unwrap_inner(result)? else {
+        return Ok(None);
+    };
+    let inner = ScopedNoun::from_slab(&inner_slab);
+    if inner.is_atom() {
+        return Ok(None);
+    }
+    let (proof_sn, rest) = inner
+        .uncons()
+        .map_err(|_| "recursive-proof: expected 3-tuple cell [proof [subj form]]".to_string())?;
+    let (subject_sn, formula_sn) = rest
+        .uncons()
+        .map_err(|_| "recursive-proof: tail not a cell".to_string())?;
+    Ok(Some((
+        atom_bytes_from_slab(&inner_slab, proof_sn.noun)?,
+        atom_bytes_from_slab(&inner_slab, subject_sn.noun)?,
+        atom_bytes_from_slab(&inner_slab, formula_sn.noun)?,
+    )))
 }
 
 /// The Path Y scan cursor and accumulator summary.
@@ -1569,37 +1632,29 @@ pub struct ScanState {
 
 /// Decode `[~ ~ height digest root size]` from `/scan-state`.
 pub fn decode_scan_state(result: &NounSlab) -> Result<ScanState, String> {
-    let inner = peek_unwrap_some(result)?;
-    let cell = inner
-        .as_cell()
-        .map_err(|_| "scan-state: expected cell".to_string())?;
-    let last_proved_height = cell
+    let inner_slab = peek_unwrap_some(result)?;
+    let inner = ScopedNoun::from_slab(&inner_slab);
+    let last_proved_height = inner
         .head()
-        .as_atom()
-        .map_err(|_| "scan-state: height not atom".to_string())?
+        .map_err(|_| "scan-state: expected cell".to_string())?
         .as_u64()
         .map_err(|_| "scan-state: height overflows u64".to_string())?;
-    let rest = cell
+    let rest = inner
         .tail()
-        .as_cell()
         .map_err(|_| "scan-state: tail not a cell".to_string())?;
-    let last_proved_digest = atom_to_le_bytes(rest.head())?;
-    let rest = rest
-        .tail()
-        .as_cell()
+    let (digest_sn, rest) = rest
+        .uncons()
+        .map_err(|_| "scan-state: tail not a cell".to_string())?;
+    let (root_sn, size_sn) = rest
+        .uncons()
         .map_err(|_| "scan-state: tail2 not a cell".to_string())?;
-    let accumulator_root = atom_to_le_bytes(rest.head())?;
-    let accumulator_size = rest
-        .tail()
-        .as_atom()
-        .map_err(|_| "scan-state: size not atom".to_string())?
-        .as_u64()
-        .map_err(|_| "scan-state: size overflows u64".to_string())?;
     Ok(ScanState {
         last_proved_height,
-        last_proved_digest,
-        accumulator_root,
-        accumulator_size,
+        last_proved_digest: digest_sn.as_ne_bytes()?,
+        accumulator_root: root_sn.as_ne_bytes()?,
+        accumulator_size: size_sn
+            .as_u64()
+            .map_err(|_| "scan-state: size overflows u64".to_string())?,
     })
 }
 
@@ -1607,35 +1662,24 @@ pub fn decode_scan_state(result: &NounSlab) -> Result<ScanState, String> {
 /// `/owner/<name>`. Returns `Ok(None)` when the inner unit is `~`
 /// (the name is not registered).
 pub fn decode_owner(result: &NounSlab) -> Result<Option<NameEntry>, String> {
-    let inner = peek_unwrap_some(result)?;
-    // Inner is `(unit name-entry)`: atom 0 when missing, `[~ entry]`
-    // when present. `entry = [owner=@t tx-hash=@t claim-count=@ud]`.
-    if inner.as_atom().is_ok() {
+    let inner_slab = peek_unwrap_some(result)?;
+    let inner = ScopedNoun::from_slab(&inner_slab);
+    if inner.is_atom() {
         return Ok(None);
     }
-    let unit_cell = inner
-        .as_cell()
-        .map_err(|_| "owner: expected (unit entry) cell".to_string())?;
-    let entry = unit_cell.tail();
-    let entry_cell = entry
-        .as_cell()
+    let entry = inner.tail()?;
+    let (owner_sn, r1) = entry
+        .uncons()
         .map_err(|_| "owner: entry not a cell".to_string())?;
-    let owner = atom_to_cord(entry_cell.head())?;
-    let rest = entry_cell
-        .tail()
-        .as_cell()
+    let (tx_sn, cc_sn) = r1
+        .uncons()
         .map_err(|_| "owner: entry tail not a cell".to_string())?;
-    let tx_hash = atom_to_cord(rest.head())?;
-    let claim_count = rest
-        .tail()
-        .as_atom()
-        .map_err(|_| "owner: claim_count not an atom".to_string())?
-        .as_u64()
-        .map_err(|_| "owner: claim_count overflows u64".to_string())?;
     Ok(Some(NameEntry {
-        owner,
-        tx_hash,
-        claim_count,
+        owner: owner_sn.as_cord()?,
+        tx_hash: tx_sn.as_cord()?,
+        claim_count: cc_sn
+            .as_u64()
+            .map_err(|_| "owner: claim_count overflows u64".to_string())?,
     }))
 }
 
@@ -1657,38 +1701,27 @@ pub struct ProofNode {
 /// registry; callers should cross-check `/owner/<name>` to tell a
 /// real empty proof from a missing name.
 pub fn decode_proof(result: &NounSlab) -> Result<Vec<ProofNode>, String> {
-    let inner = peek_unwrap_some(result)?;
+    let inner_slab = peek_unwrap_some(result)?;
+    let inner = ScopedNoun::from_slab(&inner_slab);
     let mut out = Vec::new();
     let mut cur = inner;
     loop {
-        if cur.as_atom().is_ok() {
-            // End of list (~).
+        if cur.is_atom() {
             break;
         }
-        let cell = cur
-            .as_cell()
+        let row = cur
+            .head()
             .map_err(|_| "proof: malformed list cell".to_string())?;
-        let node = cell
-            .head()
-            .as_cell()
+        let (hash_sn, side_sn) = row
+            .uncons()
             .map_err(|_| "proof: node not a cell".to_string())?;
-        let hash = node
-            .head()
-            .as_atom()
-            .map_err(|_| "proof: hash not atom".to_string())?
-            .as_ne_bytes()
-            .to_vec();
-        let side_atom = node
-            .tail()
-            .as_atom()
-            .map_err(|_| "proof: side not atom".to_string())?;
-        // Hoon loobean: 0 = %.y (sibling LEFT), 1 = %.n (sibling RIGHT).
-        let side_val = side_atom
+        let hash = hash_sn.as_ne_bytes()?;
+        let side_val = side_sn
             .as_u64()
             .map_err(|_| "proof: side overflows u64".to_string())?;
         let side = side_val == 0;
         out.push(ProofNode { hash, side });
-        cur = cell.tail();
+        cur = cur.tail().map_err(|_| "proof: malformed list".to_string())?;
     }
     Ok(out)
 }
@@ -1709,67 +1742,41 @@ pub struct AnchorView {
 /// Decode the `/anchor` peek result. Kernel returns
 /// `[~ ~ tip-digest=@ux tip-height=@ud]`.
 pub fn decode_anchor(result: &NounSlab) -> Result<AnchorView, String> {
-    let inner = peek_unwrap_some(result)?;
-    let cell = inner
-        .as_cell()
+    let inner_slab = peek_unwrap_some(result)?;
+    let inner = ScopedNoun::from_slab(&inner_slab);
+    let (tip_digest_sn, tip_height_sn) = inner
+        .uncons()
         .map_err(|_| "anchor: expected cell".to_string())?;
-    let tip_digest = atom_to_le_bytes(cell.head())?;
-    let tip_height = cell
-        .tail()
-        .as_atom()
-        .map_err(|_| "anchor: tip_height not atom".to_string())?
-        .as_u64()
-        .map_err(|_| "anchor: tip_height overflows u64".to_string())?;
     Ok(AnchorView {
-        tip_digest,
-        tip_height,
+        tip_digest: tip_digest_sn.as_ne_bytes()?,
+        tip_height: tip_height_sn
+            .as_u64()
+            .map_err(|_| "anchor: tip_height overflows u64".to_string())?,
     })
 }
 
 // Strip the outer `(unit (unit *))` wrapping the kernel peek
 // produces. Returns the innermost `*` or `None` if the inner unit
 // was null (recognized path, no value).
-fn peek_unwrap_inner(result: &NounSlab) -> Result<Option<Noun>, String> {
-    let noun = unsafe { *result.root() };
-    if noun.as_atom().map(|_| true).unwrap_or(false) {
-        // Outer `~` — path not recognized.
+fn peek_unwrap_inner(result: &NounSlab) -> Result<Option<NounSlab>, String> {
+    let root = unsafe { *result.root() };
+    let owned = copy_noun_to_slab(result, root);
+    let sn = ScopedNoun::from_slab(&owned);
+    if sn.is_atom() {
         return Err("peek: kernel did not recognize path".into());
     }
-    let outer = noun
-        .as_cell()
-        .map_err(|_| "peek: outer not a cell".to_string())?;
-    // outer = [~ ...] — outer.head() is the `~` marker (atom 0)
-    // and outer.tail() is the inner unit.
-    let inner = outer.tail();
-    if inner.as_atom().map(|_| true).unwrap_or(false) {
-        // `[~ ~]` — recognized, no value.
+    let inner = sn.tail()?;
+    if inner.is_atom() {
         return Ok(None);
     }
-    let inner_cell = inner
-        .as_cell()
-        .map_err(|_| "peek: inner not a cell".to_string())?;
-    Ok(Some(inner_cell.tail()))
+    let value = inner.tail()?.noun;
+    Ok(Some(copy_noun_to_slab(&owned, value)))
 }
 
 // Same as peek_unwrap_inner but errors on recognized-but-empty —
 // use for peeks whose result is always present.
-fn peek_unwrap_some(result: &NounSlab) -> Result<Noun, String> {
+fn peek_unwrap_some(result: &NounSlab) -> Result<NounSlab, String> {
     peek_unwrap_inner(result)?.ok_or_else(|| "peek: expected a value, got empty unit".into())
-}
-
-fn atom_to_le_bytes(noun: Noun) -> Result<Vec<u8>, String> {
-    let atom = noun.as_atom().map_err(|_| "expected atom".to_string())?;
-    Ok(atom.as_ne_bytes().to_vec())
-}
-
-fn atom_to_cord(noun: Noun) -> Result<String, String> {
-    let atom = noun
-        .as_atom()
-        .map_err(|_| "expected cord atom".to_string())?;
-    Ok(std::str::from_utf8(atom.as_ne_bytes())
-        .map_err(|_| "cord not utf-8".to_string())?
-        .trim_end_matches('\0')
-        .to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -1779,12 +1786,9 @@ fn atom_to_cord(noun: Noun) -> Result<String, String> {
 /// Read the head-tag string (e.g. `"claimed"`, `"claim-error"`) of
 /// a domain effect.
 pub fn effect_tag(effect: &NounSlab) -> Option<String> {
-    let noun = unsafe { effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let atom = cell.head().as_atom().ok()?;
-    let bytes = atom.as_ne_bytes();
-    let s = std::str::from_utf8(bytes).ok()?.trim_end_matches('\0');
-    Some(s.to_string())
+    let sn = ScopedNoun::from_slab(effect);
+    let tag = sn.head().ok()?;
+    tag.as_cord().ok()
 }
 
 /// Read the error message from a `[%claim-error msg=@t]`,
@@ -1801,12 +1805,11 @@ pub fn error_message(effect: &NounSlab) -> Option<String> {
     {
         return None;
     }
-    let noun = unsafe { effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let msg = cell.tail().as_atom().ok()?;
-    let bytes = msg.as_ne_bytes();
+    let sn = ScopedNoun::from_slab(effect);
+    let msg = sn.tail().ok()?;
+    let bytes = msg.as_ne_bytes().ok()?;
     Some(
-        std::str::from_utf8(bytes)
+        std::str::from_utf8(&bytes)
             .ok()?
             .trim_end_matches('\0')
             .to_string(),
@@ -1825,13 +1828,12 @@ pub fn anchor_advanced(effect: &NounSlab) -> Option<AnchorAdvanced> {
     if effect_tag(effect)? != "anchor-advanced" {
         return None;
     }
-    let noun = unsafe { effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let rest = cell.tail().as_cell().ok()?;
-    let tip_digest = rest.head().as_atom().ok()?.as_ne_bytes().to_vec();
-    let rest2 = rest.tail().as_cell().ok()?;
-    let tip_height = rest2.head().as_atom().ok()?.as_u64().ok()?;
-    let count = rest2.tail().as_atom().ok()?.as_u64().ok()?;
+    let sn = ScopedNoun::from_slab(effect);
+    let rest = sn.tail().ok()?;
+    let tip_digest = rest.head().ok()?.as_ne_bytes().ok()?;
+    let rest2 = rest.tail().ok()?;
+    let tip_height = rest2.head().ok()?.as_u64().ok()?;
+    let count = rest2.tail().ok()?.as_u64().ok()?;
     Some(AnchorAdvanced {
         tip_digest,
         tip_height,
@@ -1855,13 +1857,12 @@ pub fn scan_block_done(effect: &NounSlab) -> Option<ScanBlockDone> {
     if effect_tag(effect)? != "scan-block-done" {
         return None;
     }
-    let noun = unsafe { effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let rest = cell.tail().as_cell().ok()?;
-    let height = rest.head().as_atom().ok()?.as_u64().ok()?;
-    let rest = rest.tail().as_cell().ok()?;
-    let digest = atom_to_le_bytes(rest.head()).ok()?;
-    let accumulator_root = atom_to_le_bytes(rest.tail()).ok()?;
+    let sn = ScopedNoun::from_slab(effect);
+    let rest = sn.tail().ok()?;
+    let height = rest.head().ok()?.as_u64().ok()?;
+    let rest = rest.tail().ok()?;
+    let digest = rest.head().ok()?.as_ne_bytes().ok()?;
+    let accumulator_root = rest.tail().ok()?.as_ne_bytes().ok()?;
     Some(ScanBlockDone {
         height,
         digest,
@@ -1877,9 +1878,8 @@ pub fn scan_block_error(effect: &NounSlab) -> Option<String> {
     if effect_tag(effect)? != "scan-block-error" {
         return None;
     }
-    let noun = unsafe { effect.root() };
-    let cell = noun.as_cell().ok()?;
-    atom_to_cord(cell.tail()).ok()
+    let sn = ScopedNoun::from_slab(effect);
+    sn.tail().ok()?.as_cord().ok()
 }
 
 pub fn first_scan_block_error(effects: &[NounSlab]) -> Option<String> {
@@ -1892,19 +1892,10 @@ pub fn primary_set(effect: &NounSlab) -> Option<(String, String)> {
     if effect_tag(effect)? != "primary-set" {
         return None;
     }
-    let noun = unsafe { effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let rest = cell.tail().as_cell().ok()?;
-    let addr_atom = rest.head().as_atom().ok()?;
-    let name_atom = rest.tail().as_atom().ok()?;
-    let addr = std::str::from_utf8(addr_atom.as_ne_bytes())
-        .ok()?
-        .trim_end_matches('\0')
-        .to_string();
-    let name = std::str::from_utf8(name_atom.as_ne_bytes())
-        .ok()?
-        .trim_end_matches('\0')
-        .to_string();
+    let sn = ScopedNoun::from_slab(effect);
+    let rest = sn.tail().ok()?;
+    let addr = rest.head().ok()?.as_cord().ok()?;
+    let name = rest.tail().ok()?.as_cord().ok()?;
     Some((addr, name))
 }
 
@@ -1922,13 +1913,12 @@ pub fn claim_count_bumped(effect: &NounSlab) -> Option<ClaimCountBumped> {
     if effect_tag(effect)? != "claim-count-bumped" {
         return None;
     }
-    let noun = unsafe { effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let rest = cell.tail().as_cell().ok()?;
-    let claim_count = rest.head().as_atom().ok()?.as_u64().ok()?;
-    let rest2 = rest.tail().as_cell().ok()?;
-    let hull = rest2.head().as_atom().ok()?.as_ne_bytes().to_vec();
-    let root = rest2.tail().as_atom().ok()?.as_ne_bytes().to_vec();
+    let sn = ScopedNoun::from_slab(effect);
+    let rest = sn.tail().ok()?;
+    let claim_count = rest.head().ok()?.as_u64().ok()?;
+    let pair = rest.tail().ok()?;
+    let hull = pair.head().ok()?.as_ne_bytes().ok()?;
+    let root = pair.tail().ok()?.as_ne_bytes().ok()?;
     Some(ClaimCountBumped {
         claim_count,
         hull,
@@ -1953,16 +1943,14 @@ pub fn vesl_settled(effect: &NounSlab) -> Option<VeslSettled> {
     if effect_tag(effect)? != "vesl-settled" {
         return None;
     }
-    let noun = unsafe { effect.root() };
+    let sn = ScopedNoun::from_slab(effect);
     // [%vesl-settled [id hull root [%settled ~]]]
-    let cell = noun.as_cell().ok()?;
-    let note = cell.tail().as_cell().ok()?;
-    let id_atom = note.head().as_atom().ok()?;
-    let note_id = id_atom.as_ne_bytes().to_vec();
-    let rest = note.tail().as_cell().ok()?;
-    let hull = rest.head().as_atom().ok()?.as_ne_bytes().to_vec();
-    let rest2 = rest.tail().as_cell().ok()?;
-    let root = rest2.head().as_atom().ok()?.as_ne_bytes().to_vec();
+    let note = sn.tail().ok()?;
+    let note_id = note.head().ok()?.as_ne_bytes().ok()?;
+    let rest = note.tail().ok()?;
+    let hull = rest.head().ok()?.as_ne_bytes().ok()?;
+    let rest2 = rest.tail().ok()?;
+    let root = rest2.head().ok()?.as_ne_bytes().ok()?;
     Some(VeslSettled {
         note_id,
         hull,
@@ -1982,25 +1970,86 @@ pub fn prove_failed(effect: &NounSlab) -> Option<Vec<u8>> {
     if effect_tag(effect)? != "prove-failed" {
         return None;
     }
-    let noun = unsafe { *effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let trace_atom = cell.tail().as_atom().ok()?;
-    Some(trace_atom.as_ne_bytes().to_vec())
+    let sn = ScopedNoun::from_slab(effect);
+    let trace = sn.tail().ok()?;
+    Some(trace.as_ne_bytes().ok()?)
 }
 
 pub fn first_prove_failed(effects: &[NounSlab]) -> Option<Vec<u8>> {
     effects.iter().find_map(prove_failed)
 }
 
-/// `ok` from `[%verify-stark-result ok=?]` (Hoon loobean: `%.y` = true).
+/// Decode a JAM'd prove-failed payload (the thing inside [%prove-failed jam])
+/// into a human-readable string.
+///
+/// After the recent handler improvements, the top level is usually one of:
+///   - `[%dry-run-failed <nock-crash-noun>]`   — the plain `.*(subj form)` crashed
+///   - `[%prover-mule-failed <error>]`         — prove-computation mule failed
+///   - `[%stark-prove-failed <error>]`         — the STARK prover returned failure
+///
+/// This helps us instantly see whether the simple based candidate list
+/// is dying in normal Nock evaluation or inside the STARK prover.
+pub fn decode_prove_failure(jam: &[u8]) -> String {
+    if jam.is_empty() {
+        return "<empty failure jam>".to_string();
+    }
+
+    let mut stack = new_stack();
+    let noun = match cue_from_bytes(&mut stack, jam) {
+        Some(n) => n,
+        None => return "<cue failed on jam>".to_string(),
+    };
+
+    let sn = ScopedNoun::from_stack(&stack, noun);
+
+    if !sn.is_atom() {
+        if let (Ok(h), Ok(tail)) = (sn.head(), sn.tail()) {
+            if let Ok(tag) = h.as_cord() {
+                match tag.as_str() {
+                    "dry-run-failed" | "prover-mule-failed" | "stark-prove-failed" => {
+                        return format!("[{} {}]", tag, format_noun_short(tail));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    format_noun_short(sn)
+}
+
+/// Very small pretty-printer for a Noun — enough to see crash tags and
+/// the first couple of children without blowing up the terminal.
+fn format_noun_short(sn: ScopedNoun<'_>) -> String {
+    if sn.is_atom() {
+        let Ok(bytes) = sn.as_ne_bytes() else {
+            return "<unknown atom>".to_string();
+        };
+        if bytes.len() <= 8 {
+            let val = sn.as_u64_opt().unwrap_or(0);
+            format!("{} (0x{:x})", val, val)
+        } else if bytes.len() <= 32 {
+            format!(
+                "atom[{} bytes: {:02x?}...]",
+                bytes.len(),
+                &bytes[..16.min(bytes.len())]
+            )
+        } else {
+            format!("atom[{} bytes]", bytes.len())
+        }
+    } else if let (Ok(h), Ok(t)) = (sn.head(), sn.tail()) {
+        format!("[{} {}]", format_noun_short(h), format_noun_short(t))
+    } else {
+        "<unknown noun>".to_string()
+    }
+}
 pub fn verify_stark_result(effect: &NounSlab) -> Option<bool> {
     if effect_tag(effect)? != "verify-stark-result" {
         return None;
     }
-    let noun = unsafe { effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let ok_atom = cell.tail().as_atom().ok()?;
-    let v = ok_atom.as_u64().ok()?;
+    let sn = ScopedNoun::from_slab(effect);
+    let ok = sn.tail().ok()?;
+    let v = ok.as_u64().ok()?;
     Some(v == 0)
 }
 
@@ -2013,12 +2062,11 @@ pub fn verify_stark_error(effect: &NounSlab) -> Option<String> {
     if effect_tag(effect)? != "verify-stark-error" {
         return None;
     }
-    let noun = unsafe { effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let msg = cell.tail().as_atom().ok()?;
-    let bytes = msg.as_ne_bytes();
+    let sn = ScopedNoun::from_slab(effect);
+    let msg = sn.tail().ok()?;
+    let bytes = msg.as_ne_bytes().ok()?;
     Some(
-        std::str::from_utf8(bytes)
+        std::str::from_utf8(&bytes)
             .ok()?
             .trim_end_matches('\0')
             .to_string(),
@@ -2034,10 +2082,9 @@ pub fn accumulator_snapshot_verify_result(effect: &NounSlab) -> Option<bool> {
     if effect_tag(effect)? != "accumulator-snapshot-verify-result" {
         return None;
     }
-    let noun = unsafe { effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let ok_atom = cell.tail().as_atom().ok()?;
-    let v = ok_atom.as_u64().ok()?;
+    let sn = ScopedNoun::from_slab(effect);
+    let ok = sn.tail().ok()?;
+    let v = ok.as_u64().ok()?;
     Some(v == 0)
 }
 
@@ -2051,12 +2098,11 @@ pub fn accumulator_snapshot_verify_error(effect: &NounSlab) -> Option<String> {
     if effect_tag(effect)? != "accumulator-snapshot-verify-error" {
         return None;
     }
-    let noun = unsafe { effect.root() };
-    let cell = noun.as_cell().ok()?;
-    let msg = cell.tail().as_atom().ok()?;
-    let bytes = msg.as_ne_bytes();
+    let sn = ScopedNoun::from_slab(effect);
+    let msg = sn.tail().ok()?;
+    let bytes = msg.as_ne_bytes().ok()?;
     Some(
-        std::str::from_utf8(bytes)
+        std::str::from_utf8(&bytes)
             .ok()?
             .trim_end_matches('\0')
             .to_string(),

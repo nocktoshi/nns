@@ -14,23 +14,20 @@ The hull is a **read-only chain scanner** — `GET /health`, `GET /status`, `GET
 # Nightly Rust
 rustup toolchain install nightly
 
-# hoonc
+# hoonc + nockup (Hoon dependency installer)
 cargo +nightly install --git https://github.com/nockchain/nockchain.git hoonc
-
-# nockchain sibling clone (sourced via $NOCK_HOME, default ../nockchain)
-git clone https://github.com/nockchain/nockchain ~/nockchain
-
-# vesl sibling clone (sourced via $VESL_HOME, default ../vesl)
-git clone https://github.com/zkvesl/vesl-core.git ~/vesl-core
-cd ~/vesl-core
-git checkout dev
+cargo +nightly install --path ~/nockchain/crates/nockup --locked   # or clone nockchain first
 ```
 
-`scripts/setup-hoon-tree.sh` (invoked by `make install`) symlinks the
-nockchain prover/verifier arms and the vesl graft/prover/verifier libs
-into `hoon/` so `hoonc` can resolve them. Override locations by setting
-`NOCK_HOME` / `VESL_HOME` in the environment or in `vesl.toml`
-(`nock_home = "..."`, `vesl_home = "..."`).
+`make install-kernel` (via `make install`) runs `nockup package install` from
+[`nockapp.toml`](nockapp.toml): Nockchain `hoon/` @ `ff6dd2d…` and Vesl libs from
+[nocktoshi/vesl-core `phase1-verifier-debug-and-type-fix`](https://github.com/nocktoshi/vesl-core/tree/phase1-verifier-debug-and-type-fix)
+(`protocol/lib` @ [`dc9382cd`](https://github.com/nocktoshi/vesl-core/commit/dc9382cd2110cb39561bf4abdc47d7d7f88029b5)).
+
+ `make sync-hoon-from-nockup` copies from
+`hoon/packages/` into `hoon/common/`, `hoon/dat/`, and `hoon/lib/` (real files, no symlinks);
+`hoon/jams/` is vendored in-repo.
+No sibling clones required.
 
 ## Quick start
 
@@ -173,7 +170,7 @@ Fee tiers (ported from `nock-names-worker/src/utils/constants.ts`):
 ## Configuration
 
 Three layers, in precedence order (highest wins): CLI flags, env vars,
-`vesl.toml`. The hull honors:
+`nns.toml`. The hull honors:
 
 
 | Env var                 | Purpose                                           | Default                                                  |
@@ -181,15 +178,15 @@ Three layers, in precedence order (highest wins): CLI flags, env vars,
 | `API_PORT`              | HTTP port                                         | `3000`                                                   |
 | `BIND_ADDR`             | HTTP bind address                                 | `127.0.0.1`                                              |
 | `NNS_DATA_DIR`          | Root dir for kernel checkpoints + mirror snapshot | `.`                                                      |
-| `NNS_KERNEL_JAM`        | Path to the compiled kernel                       | `out.jam`                                                |
+| `NNS_KERNEL_JAM`        | Path to the compiled kernel                       | `nns.jam`                                                |
 | `NNS_PAYMENT_ADDRESS`   | Base58 NNS treasury address (Phase 2)             | `8s29XUK8Do7QWt2MHfPdd1gDSta6db4c3bQrxP1YdJNfXpL3WPzTT5` |
-| `VESL_TOML`             | Path to settlement config                         | `vesl.toml`                                              |
+| `NNS_CONFIG`             | Path to settlement config                         | `nns.toml`                                              |
 | `RUST_LOG`              | Tracing filter (passed to `tracing_subscriber`)   | unset                                                    |
 
-`NNS_PAYMENT_ADDRESS` is also readable from `vesl.toml` as
+`NNS_PAYMENT_ADDRESS` is also readable from `nns.toml` as
 `payment_address = "..."` for treasury binding used in predicate checks.
 
-Vesl settlement config in `vesl.toml`:
+Vesl settlement config in `nns.toml`:
 
 ```toml
 # v1: kernel verifies, no chain interaction.
@@ -267,8 +264,8 @@ scripts/
   parity.py                 legacy vs new API diff tool
 tests/
   handlers.rs               full HTTP integration tests
-vesl.toml                   settlement config
+nns.toml                   settlement config
 Cargo.toml                  local path deps (../nockchain + ../vesl)
-out.jam                     compiled kernel (built by hoonc)
+nns.jam                     compiled kernel (built by hoonc)
 ```
 

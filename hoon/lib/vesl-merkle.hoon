@@ -1,1 +1,0 @@
-../../../vesl-core/protocol/lib/vesl-merkle.hoon

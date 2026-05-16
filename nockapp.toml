@@ -1,0 +1,21 @@
+[package]
+name = "."
+version = "0.1.0"
+description = "NNS - The Nockchain Name Service"
+
+[dependencies.nockchain-hoon]
+git = "https://github.com/nockchain/nockchain.git"
+commit = "ff6dd2d64661f6607485feb9373cf705db86edce"
+path = "hoon"
+
+[dependencies.vesl-lib]
+git = "https://github.com/nocktoshi/vesl-core.git"
+commit = "dc9382cd2110cb39561bf4abdc47d7d7f88029b5"
+path = "protocol/lib"
+files = [
+  "vesl-graft",
+  "vesl-merkle",
+  "vesl-prover",
+  "vesl-stark-verifier",
+  "vesl-verifier",
+]

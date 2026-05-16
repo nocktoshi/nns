@@ -36,10 +36,10 @@ static TRACING_INIT: Once = Once::new();
 pub const BOOT_PHASE3: &str = "nns-phase3-test";
 
 pub fn kernel_jam_bytes() -> Vec<u8> {
-    let path = std::env::var("NNS_KERNEL_JAM").unwrap_or_else(|_| "out.jam".to_string());
+    let path = std::env::var("NNS_KERNEL_JAM").unwrap_or_else(|_| "nns.jam".to_string());
     std::fs::read(&path)
-        .or_else(|_| std::fs::read("../out.jam"))
-        .unwrap_or_else(|e| panic!("could not read kernel jam at {path} or ../out.jam: {e}"))
+        .or_else(|_| std::fs::read("../nns.jam"))
+        .unwrap_or_else(|e| panic!("could not read kernel jam at {path} or ../nns.jam: {e}"))
 }
 
 /// Logs a kernel poke/peek result for manual inspection when debugging tests.
@@ -66,7 +66,7 @@ pub fn log_predicate_api(case_id: &str, operation: &str, response: &str) {
 
 fn init_tracing_once() {
     TRACING_INIT.call_once(|| {
-        nns_vesl::prepare_tracy_for_host_cpu();
+        nns_vesl::apply_nns_config();
         let cli = boot::default_boot_cli(true);
         boot::init_default_tracing(&cli);
     });

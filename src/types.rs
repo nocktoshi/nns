@@ -307,6 +307,15 @@ pub struct AccumulatorLookupResponse {
     /// `light_verify` (`accumulator_snapshot_jam_hex`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accumulator_snapshot_hex: Option<String>,
+    /// Y3+: hex-encoded JAM of the latest recursive rollup proof (PathY4LookupBundle.recursive_proof_hex).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recursive_proof_hex: Option<String>,
+    /// Y3+: JAM of the traced subject for the recursive_proof (pair with formula).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recursive_subject_jam_hex: Option<String>,
+    /// Y3+: JAM of the traced formula for the recursive_proof.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recursive_formula_jam_hex: Option<String>,
     pub last_proved_height: u64,
     pub last_proved_digest: String,
     pub accumulator_root: String,
