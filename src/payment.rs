@@ -222,8 +222,9 @@ mod tests {
             10,
         ];
         let mut stack = NockStack::new(NOCK_STACK_SIZE, 0);
+        let space = stack.noun_space();
         let noun = Noun::cue_bytes_slice(&mut stack, &jam).expect("cue lock jam");
-        let lock = decode_lock_note_data_payload(&noun).expect("decode [%0 lock] payload");
+        let lock = decode_lock_note_data_payload(&noun, &space).expect("decode [%0 lock] payload");
         let h = lock.hash().expect("Lock::hash consensus root");
         assert_eq!(h.to_base58(), TREASURY_LOCK_ROOT_B58.trim());
     }

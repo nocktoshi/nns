@@ -58,7 +58,7 @@ impl ClaimNoteV1 {
         let o = make_cord(&mut stack, &self.owner);
         let tx = make_cord(&mut stack, &self.tx_hash);
         let noun = T(&mut stack, &[n, o, tx]);
-        jam_to_bytes(&mut stack, noun)
+        jam_to_bytes(noun, &stack.noun_space())
     }
 
     /// Decode **`blob`** only. Chain evidence is **not** read from note-data; the follower

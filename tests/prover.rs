@@ -265,14 +265,14 @@ fn baseline_prove_arbitrary_jams() -> (Vec<u8>, Vec<u8>) {
     use nock_noun_rs::{jam_to_bytes, new_stack, Cell, D};
 
     let mut sub_stack = new_stack();
-    let subject_jam = jam_to_bytes(&mut sub_stack, D(42));
+    let subject_jam = jam_to_bytes(D(42), &sub_stack.noun_space());
 
     let mut form_stack = new_stack();
     let base = Cell::new(&mut form_stack, D(0), D(1)).as_noun();
     let inc1 = Cell::new(&mut form_stack, D(4), base).as_noun();
     let inc2 = Cell::new(&mut form_stack, D(4), inc1).as_noun();
     let formula_noun = Cell::new(&mut form_stack, D(4), inc2).as_noun();
-    let formula_jam = jam_to_bytes(&mut form_stack, formula_noun);
+    let formula_jam = jam_to_bytes(formula_noun, &form_stack.noun_space());
 
     (subject_jam, formula_jam)
 }
@@ -496,7 +496,7 @@ async fn phase3c_step3_prove_arbitrary_roundtrip() {
     // Build noun `42` and jam it.
     let mut sub_stack = new_stack();
     let subject_noun = D(42);
-    let subject_jam = jam_to_bytes(&mut sub_stack, subject_noun);
+    let subject_jam = jam_to_bytes(subject_noun, &sub_stack.noun_space());
 
     // Build noun `[4 [4 [4 [0 1]]]]` and jam it. Three nested nock-4
     // increments over the subject = adds 3. Picking a non-trivial
@@ -507,7 +507,7 @@ async fn phase3c_step3_prove_arbitrary_roundtrip() {
     let inc1 = Cell::new(&mut form_stack, D(4), base).as_noun(); // [4 [0 1]]
     let inc2 = Cell::new(&mut form_stack, D(4), inc1).as_noun(); // [4 [4 ...]]
     let formula_noun = Cell::new(&mut form_stack, D(4), inc2).as_noun(); // [4 [4 [4 ...]]]
-    let formula_jam = jam_to_bytes(&mut form_stack, formula_noun);
+    let formula_jam = jam_to_bytes(formula_noun, &form_stack.noun_space());
 
     let t_prove = Instant::now();
     let effects = {
