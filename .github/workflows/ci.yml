@@ -45,7 +45,8 @@ jobs:
 
       - name: Install hoonc and nockup
         run: |
-          cargo +nightly install --git https://github.com/nocktoshi/nockchain.git --branch dev --locked -p hoonc -p nockup
+          cargo +nightly install --git https://github.com/nocktoshi/nockchain.git --branch dev --locked -p hoonc
+          cargo +nightly install --git https://github.com/nocktoshi/nockchain.git --branch dev --locked -p nockup
 
       - name: Build kernel jam
         run: make install-kernel DESTDIR=$HOME/.local
