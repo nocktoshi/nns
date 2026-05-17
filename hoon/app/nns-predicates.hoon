@@ -25,6 +25,7 @@
 ::  predicates in three levels:
 ::
 ::    Level A (landed 2026-04-24):
+::      - G1 format helpers       (`valid-char`, `is-valid-name`, …)
 ::      - `fee-for-name`          (pure Hoon, no external deps)
 ::      - `chain-links-to`        (works on an `anchor-header` triple,
 ::                                 not on a full `page:t` noun)
@@ -197,6 +198,55 @@
                              ::   `src/payment.rs::output_pays_treasury_v1`)
   ==
 ::
+::  --- G1 format helpers ---
+::
+::  +valid-char: lowercase letter (a-z) or ascii digit (0-9).
+::
+++  valid-char
+  |=  c=@
+  ^-  ?
+  ?|  &((gte c 'a') (lte c 'z'))
+      &((gte c '0') (lte c '9'))
+  ==
+::
+::  +all-valid-chars: every byte of the cord satisfies valid-char.
+::
+++  all-valid-chars
+  |=  cord=@t
+  ^-  ?
+  =/  n  (met 3 cord)
+  =/  i=@  0
+  |-
+  ?:  =(i n)  %.y
+  ?.  (valid-char (cut 3 [i 1] cord))  %.n
+  $(i +(i))
+::
+::  +has-nock-suffix: cord ends in the literal bytes ".nock".
+::
+++  has-nock-suffix
+  |=  cord=@t
+  ^-  ?
+  =/  n  (met 3 cord)
+  ?:  (lth n 6)  %.n
+  =((cut 3 [(sub n 5) 5] cord) '.nock')
+::
+::  +stem-len: length of the cord's stem (before ".nock").
+::
+++  stem-len
+  |=  cord=@t
+  ^-  @ud
+  (sub (met 3 cord) 5)
+::
+::  +is-valid-name: G1 — `<nonempty lowercase+digit stem>.nock`.
+::
+++  is-valid-name
+  |=  name=@t
+  ^-  ?
+  ?.  (has-nock-suffix name)  %.n
+  =/  slen  (stem-len name)
+  ?:  =(slen 0)  %.n
+  (all-valid-chars (cut 3 [0 slen] name))
+::
 ::  +fee-for-name: NNS fee schedule, keyed on the stem length of a
 ::  `<stem>.nock` name. Mirror of [src/payment.rs::fee_for_name] —
 ::  when changing either side, update both and run the cross-repo
@@ -210,21 +260,20 @@
 ++  fee-for-name
   |=  name=@t
   ^-  @ud
-  =/  bytes=@ud  (met 3 name)
-  =/  suffix-len=@ud  5
+  ::  Suffix check matches the pre-consolidation schedule (bytes >= 5),
+  ::  not `has-nock-suffix` (bytes >= 6) — so bare `.nock` yields stem 0.
+  =/  bytes  (met 3 name)
   =/  has-suffix=?
-    ?:  (lth bytes suffix-len)  %.n
-    =((cut 3 [(sub bytes suffix-len) suffix-len] name) '.nock')
-  =/  stem-len=@ud
-    ?:  has-suffix  (sub bytes suffix-len)
-    bytes
+    ?:  (lth bytes 5)  %.n
+    =((cut 3 [(sub bytes 5) 5] name) '.nock')
+  =/  slen  ?:(has-suffix (sub bytes 5) bytes)
   ::  Atomic fee units: nicks (65.536 nicks = 1 NOCK)
   ::    1..4 chars  -> 327.680.000
   ::    5..9 chars  -> 32.768.000
   ::    10+ chars   -> 6.553.600
-  ?:  =(stem-len 0)            0
-  ?:  (gte stem-len 10)        6.553.600
-  ?:  (gte stem-len 5)         32.768.000
+  ?:  =(slen 0)  0
+  ?:  (gte slen 10)  6.553.600
+  ?:  (gte slen 5)   32.768.000
   327.680.000
 ::
 ::  +chain-links-to: given a claim's block digest, a list of
@@ -397,48 +446,6 @@
   ?&  =(bundle-tip state-tip)
       =(bundle-height state-height)
   ==
-::
-::  --- G1 format helpers (duplicated from app.hoon so the gate
-::      library is self-contained — keep them in sync) ---
-::
-++  valid-char
-  |=  c=@
-  ^-  ?
-  ?|  &((gte c 'a') (lte c 'z'))
-      &((gte c '0') (lte c '9'))
-  ==
-::
-++  all-valid-chars
-  |=  cord=@t
-  ^-  ?
-  =/  n  (met 3 cord)
-  =/  i=@  0
-  |-
-  ?:  =(i n)  %.y
-  ?.  (valid-char (cut 3 [i 1] cord))  %.n
-  $(i +(i))
-::
-++  has-nock-suffix
-  |=  cord=@t
-  ^-  ?
-  =/  n  (met 3 cord)
-  ?:  (lth n 6)  %.n
-  =((cut 3 [(sub n 5) 5] cord) '.nock')
-::
-++  stem-len
-  |=  cord=@t
-  ^-  @ud
-  (sub (met 3 cord) 5)
-::
-::  +is-valid-name: G1 — `<nonempty lowercase+digit stem>.nock`.
-::
-++  is-valid-name
-  |=  name=@t
-  ^-  ?
-  ?.  (has-nock-suffix name)  %.n
-  =/  slen  (stem-len name)
-  ?:  =(slen 0)  %.n
-  (all-valid-chars (cut 3 [0 slen] name))
 ::
 ::  +validate-claim-bundle: Phase 3c gate validator. Composes the
 ::  Level A + Level B + Level C-A predicates + the cheap G1/C2

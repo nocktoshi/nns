@@ -1,17 +1,15 @@
-::  tests/names.hoon — compile-time tests for nns-vesl's
+::  hoon/app/names-test.hoon — compile-time tests for nns-vesl's
 ::  verification gate.
 ::
-::  The kernel's sole job is to evaluate the gate defined in
-::  hoon/app/app.hoon. These tests re-implement the gate's helpers
-::  in parallel (kept trivially short so any drift is obvious) and
-::  assert the guarantees (G1 format + G2 Merkle inclusion) across
-::  representative batches — including the K-leaf shape the hull
-::  hands to the graft.
+::  G1 name format and fee schedule come from `nns-predicates`; Merkle
+::  fixture helpers stay local for building test proofs. The kernel gate
+::  lives in `hoon/app/app.hoon`.
 ::
-::  Compile: hoonc --new --arbitrary hoon/tests/names.hoon hoon/
+::  Compile: hoonc --new --arbitrary hoon/app/names-test.hoon hoon/
 ::  Success (build succeeded) = all assertions passed.
 ::
 /+  *vesl-merkle
+/=  np  /app/nns-predicates
 ::
 =>
 |%
@@ -21,49 +19,7 @@
   ?>  =(a b)
   %.y
 ::
-::  gate helpers — parallel copies of those in hoon/app/app.hoon
-::
-++  valid-char
-  |=  c=@  ^-  ?
-  ?|  &((gte c 'a') (lte c 'z'))
-      &((gte c '0') (lte c '9'))
-  ==
-::
-++  all-valid-chars
-  |=  cord=@t  ^-  ?
-  =/  n  (met 3 cord)
-  =/  i=@  0
-  |-
-  ?:  =(i n)  %.y
-  ?.  (valid-char (cut 3 [i 1] cord))  %.n
-  $(i +(i))
-::
-++  has-nock-suffix
-  |=  cord=@t  ^-  ?
-  =/  n  (met 3 cord)
-  ?:  (lth n 6)  %.n
-  =((cut 3 [(sub n 5) 5] cord) '.nock')
-::
-++  stem-len
-  |=  cord=@t  ^-  @ud
-  (sub (met 3 cord) 5)
-::
-++  is-valid-name
-  |=  name=@t  ^-  ?
-  ?.  (has-nock-suffix name)  %.n
-  =/  slen  (stem-len name)
-  ?:  =(slen 0)  %.n
-  (all-valid-chars (cut 3 [0 slen] name))
-::
-++  fee-for
-  |=  name=@t  ^-  @ud
-  =/  slen  (stem-len name)
-  ?:  =(slen 0)  0
-  ?:  (gte slen 10)  6.553.600
-  ?:  (gte slen 5)   32.768.000
-  327.680.000
-::
-::  Merkle primitives — parallel copies.
+::  Merkle fixture helpers (test-local scaffolding).
 ::
 ++  nth
   |=  [lst=(list @) i=@ud]
@@ -123,7 +79,7 @@
   |-  ^-  ?
   ?~  leaves  %.y
   =/  chunk=@  (jam [name.i.leaves owner.i.leaves tx-hash.i.leaves])
-  ?&  (is-valid-name name.i.leaves)
+  ?&  (is-valid-name:np name.i.leaves)
       (verify-chunk chunk proof.i.leaves expected-root)
       $(leaves t.leaves)
   ==
@@ -143,26 +99,26 @@
 ::  G1: name format
 ::  ============================================
 ::
-?>  (assert-eq (is-valid-name 'a.nock') %.y)
-?>  (assert-eq (is-valid-name 'abc123.nock') %.y)
-?>  (assert-eq (is-valid-name 'deadbeef01.nock') %.y)
-?>  (assert-eq (is-valid-name '.nock') %.n)
-?>  (assert-eq (is-valid-name 'foo') %.n)
-?>  (assert-eq (is-valid-name 'foo.bar') %.n)
-?>  (assert-eq (is-valid-name 'Foo.nock') %.n)
-?>  (assert-eq (is-valid-name 'foo-bar.nock') %.n)
-?>  (assert-eq (is-valid-name 'foo.nock.nock') %.y)
-?>  (assert-eq (is-valid-name 'foo_bar.nock') %.n)
+?>  (assert-eq (is-valid-name:np 'a.nock') %.y)
+?>  (assert-eq (is-valid-name:np 'abc123.nock') %.y)
+?>  (assert-eq (is-valid-name:np 'deadbeef01.nock') %.y)
+?>  (assert-eq (is-valid-name:np '.nock') %.n)
+?>  (assert-eq (is-valid-name:np 'foo') %.n)
+?>  (assert-eq (is-valid-name:np 'foo.bar') %.n)
+?>  (assert-eq (is-valid-name:np 'Foo.nock') %.n)
+?>  (assert-eq (is-valid-name:np 'foo-bar.nock') %.n)
+?>  (assert-eq (is-valid-name:np 'foo.nock.nock') %.y)
+?>  (assert-eq (is-valid-name:np 'foo_bar.nock') %.n)
 ::
 ::  ============================================
 ::  Fee tiers match legacy worker (nicks)
 ::  ============================================
 ::
-?>  (assert-eq (fee-for 'a.nock') 327.680.000)
-?>  (assert-eq (fee-for 'abcd.nock') 327.680.000)
-?>  (assert-eq (fee-for 'abcde.nock') 32.768.000)
-?>  (assert-eq (fee-for 'abcdefghi.nock') 32.768.000)
-?>  (assert-eq (fee-for 'abcdefghij.nock') 6.553.600)
+?>  (assert-eq (fee-for-name:np 'a.nock') 327.680.000)
+?>  (assert-eq (fee-for-name:np 'abcd.nock') 327.680.000)
+?>  (assert-eq (fee-for-name:np 'abcde.nock') 32.768.000)
+?>  (assert-eq (fee-for-name:np 'abcdefghi.nock') 32.768.000)
+?>  (assert-eq (fee-for-name:np 'abcdefghij.nock') 6.553.600)
 ::
 ::  ============================================
 ::  Batch G2: 1-leaf batch (smallest real case)

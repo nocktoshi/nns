@@ -333,77 +333,6 @@
 ::
 ::  Build the subject+formula for the real per-block transition prove.
 ::
-::  --- domain predicates shared by %claim and nns-gate ---
-::
-::  +valid-char: lowercase letter (a-z) or ascii digit (0-9).
-::
-++  valid-char
-  |=  c=@
-  ^-  ?
-  ?|  &((gte c 'a') (lte c 'z'))
-      &((gte c '0') (lte c '9'))
-  ==
-::
-::  +all-valid-chars: every byte of the cord satisfies valid-char.
-::
-++  all-valid-chars
-  |=  cord=@t
-  ^-  ?
-  =/  n  (met 3 cord)
-  =/  i=@  0
-  |-
-  ?:  =(i n)  %.y
-  ?.  (valid-char (cut 3 [i 1] cord))  %.n
-  $(i +(i))
-::
-::  +has-nock-suffix: cord ends in the literal bytes ".nock".
-::
-++  has-nock-suffix
-  |=  cord=@t
-  ^-  ?
-  =/  n  (met 3 cord)
-  ?:  (lth n 6)  %.n
-  =((cut 3 [(sub n 5) 5] cord) '.nock')
-::
-::  +stem-len: length of the cord's stem (before ".nock").
-::
-++  stem-len
-  |=  cord=@t
-  ^-  @ud
-  (sub (met 3 cord) 5)
-::
-::  +is-valid-name: G1 — format check.
-::
-++  is-valid-name
-  |=  name=@t
-  ^-  ?
-  ?.  (has-nock-suffix name)  %.n
-  =/  slen  (stem-len name)
-  ?:  =(slen 0)  %.n
-  (all-valid-chars (cut 3 [0 slen] name))
-::
-::  +fee-for: fee tiers in nicks, ported from the legacy worker
-::  (src/utils/constants.ts).
-::
-::    stem len >= 10    -> 100
-::    stem len 5..=9    -> 500
-::    stem len 1..=4    -> 5000
-::    empty (rejected by is-valid-name first) -> 0
-::
-++  fee-for
-  |=  name=@t
-  ^-  @ud
-  =/  slen  (stem-len name)
-  ::  Atomic fee units: nicks (65.536 nicks = 1 NOCK)
-  ::    1..4 chars  -> 327.680.000
-  ::    5..9 chars  -> 32.768.000
-  ::    10+ chars   -> 6.553.600
-  ?:  =(slen 0)  0
-  ?:  (gte slen 10)  6.553.600
-  ?:  (gte slen 5)   32.768.000
-  327.680.000
-::
-::
 ::  +nns-gate: verification gate for %vesl-settle / %vesl-verify.
 ::
 ::    data:          (list [name=@t owner=@t tx-hash=@t proof=(list proof-node)])
@@ -435,7 +364,7 @@
   |-  ^-  ?
   ?~  leaves  %.y
   =/  chunk=@  (jam [name.i.leaves owner.i.leaves tx-hash.i.leaves])
-  ?&  (is-valid-name name.i.leaves)
+  ?&  (is-valid-name:np name.i.leaves)
       !(~(has in seen-names) name.i.leaves)
       !(~(has in seen-tx-hashes) tx-hash.i.leaves)
       (verify-chunk chunk proof.i.leaves expected-root)

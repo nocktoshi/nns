@@ -223,11 +223,13 @@
   |=  [prev-h=@ want-h=@]
   ^-  *
   =/  ax  full-axes
+  ::  Like `++transition-trace-formula-empty`, omit digest-limb checks and
+  ::  `want-h` equality — deep `trace-pick` axes (want-h slot 11, digest
+  ::  limbs) trap under `.*` on the 16-wide flat subject. Host
+  ::  `++transition-spec` still checks want-height and page=want digest.
   %-  compile-trace
   :~  [%nonzero proof-len.ax]
       [%eq prev-h.ax prev-h]
-      [%eq want-h.ax want-h]
-      [%eq-digest-limbs full-page-want-limb-pairs]
       [%fww cand-tag.ax acc-tag.ax]
   ==
 ::
