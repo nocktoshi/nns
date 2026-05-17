@@ -33,14 +33,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: nocktoshi/nockchain
-          ref: ea5f831635f32acdd55e9ea60890e012dcd1b13f
+          ref: dev
           path: nockchain
 
       - name: Checkout vesl-core
         uses: actions/checkout@v4
         with:
           repository: nocktoshi/vesl-core
-          ref: dc9382cd2110cb39561bf4abdc47d7d7f88029b5
+          ref: dev
           path: vesl-core
 
       - name: Install Rust (nightly)

@@ -5,12 +5,12 @@ description = "NNS - The Nockchain Name Service"
 
 [dependencies.nockchain-hoon]
 git = "https://github.com/nocktoshi/nockchain.git"
-commit = "ea5f831635f32acdd55e9ea60890e012dcd1b13f"
+commit = "f1c7cd87883bd7883d06a898361884d1cb18f98e"
 path = "hoon"
 
 [dependencies.vesl-lib]
 git = "https://github.com/nocktoshi/vesl-core.git"
-commit = "dc9382cd2110cb39561bf4abdc47d7d7f88029b5"
+commit = "556f707db7f896a032fba4fee87387f8e6e101d7"
 path = "protocol/lib"
 files = [
   "vesl-graft",
