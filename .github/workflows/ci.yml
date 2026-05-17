@@ -48,6 +48,9 @@ jobs:
         with:
           toolchain: nightly
 
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
