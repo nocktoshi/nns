@@ -10,7 +10,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   TRACY_NO_INVARIANT_CHECK: "1"
-  NNS_KERNEL_JAM: ${{ github.workspace }}/nns-vesl/nns.jam
+  NNS_KERNEL_JAM: ${{ github.workspace }}/nns/nns.jam
 
 jobs:
   prover:
@@ -18,13 +18,13 @@ jobs:
     timeout-minutes: 360
     defaults:
       run:
-        working-directory: nns-vesl
+        working-directory: nns
 
     steps:
-      - name: Checkout nns-vesl
+      - name: Checkout nns
         uses: actions/checkout@v4
         with:
-          path: nns-vesl
+          path: nns
 
       - name: Checkout nockchain
         uses: actions/checkout@v4
@@ -48,7 +48,7 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: nns-vesl
+          workspaces: nns
           cache-on-failure: true
 
       - name: Install hoonc and nockup

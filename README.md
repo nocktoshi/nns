@@ -1,4 +1,4 @@
-# nns-vesl
+# nns
 
 <img width="1416" height="540" alt="NNS - Nockchain Name Service" src="https://github.com/user-attachments/assets/7793ed6f-766a-4e93-a2b4-834c04843c37" /> <br />
 
@@ -33,7 +33,7 @@ No sibling clones required.
 
 ```bash
 # clone nns repo
-git clone https://github.com/nocktoshi/nns-vesl.git
+git clone https://github.com/nocktoshi/nns.git
 
 # one-time install (installs `nns` into ~/.local/bin)
 make install

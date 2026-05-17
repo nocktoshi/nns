@@ -1,4 +1,4 @@
-//! nns-vesl — NNS hull (Nockchain Name Service): read-only scanner over
+//! nns — NNS hull (Nockchain Name Service): read-only scanner over
 //! `.nock` registrations.
 //!
 //! The kernel in `hoon/app/app.hoon` holds **`v0-state`**: an

@@ -16,12 +16,12 @@ use std::time::Instant;
 
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
-use nns_vesl::chain::{ScanBlockFetch, NNS_GENESIS_HEIGHT as H0};
-use nns_vesl::chain_follower::{
+use nns::chain::{ScanBlockFetch, NNS_GENESIS_HEIGHT as H0};
+use nns::chain_follower::{
     apply_prefetched_scan_blocks, apply_prefetched_scan_blocks_with_claims,
 };
-use nns_vesl::formula_nock::formula_contains_banned_nock_opcodes;
-use nns_vesl::kernel::{
+use nns::formula_nock::formula_contains_banned_nock_opcodes;
+use nns::kernel::{
     build_prove_arbitrary_poke, build_prove_claim_in_stark_poke,
     build_prove_identity_poke, build_prove_recursive_genesis_poke,
     build_prove_recursive_transition_poke,
@@ -37,8 +37,8 @@ use nns_vesl::kernel::{
     first_verify_stark_result, verify_stark_explicit_offline, AnchorHeader, ClaimBundle,
     ClaimWitness, InStarkValidation, ClaimCandidate, build_scan_state_peek, decode_scan_state,
 };
-use nns_vesl::payment::{fee_for_name, TREASURY_LOCK_ROOT_B58};
-use nns_vesl::{api, state::AppState};
+use nns::payment::{fee_for_name, TREASURY_LOCK_ROOT_B58};
+use nns::{api, state::AppState};
 use nockapp::kernel::boot;
 use nockapp::kernel::boot::NockStackSize;
 use nockapp::wire::{SystemWire, Wire};
@@ -63,7 +63,7 @@ async fn trace_formula_spec_parity_peeks() {
         &kernel_jam(),
         cli,
         &[],
-        "nns-vesl-tracer-parity",
+        "nns-tracer-parity",
         Some(tmp.path().to_path_buf()),
     )
     .await
@@ -119,12 +119,12 @@ fn kernel_jam() -> Vec<u8> {
 /// stack; prover jets registered. Mirrors vesl's `boot_forge_with_prover`.
 static TRACING_INIT: std::sync::Once = std::sync::Once::new();
 
-async fn boot_nns_with_prover() -> (tempfile::TempDir, nns_vesl::state::SharedState) {
+async fn boot_nns_with_prover() -> (tempfile::TempDir, nns::state::SharedState) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut cli = boot::default_boot_cli(true);
     cli.stack_size = NockStackSize::Large;
     TRACING_INIT.call_once(|| {
-        nns_vesl::apply_nns_config();
+        nns::apply_nns_config();
         let _ = boot::init_default_tracing(&cli);
     });
     let prover_hot_state = zkvm_jetpack::hot::produce_prover_hot_state();
@@ -132,7 +132,7 @@ async fn boot_nns_with_prover() -> (tempfile::TempDir, nns_vesl::state::SharedSt
         &kernel_jam(),
         cli,
         prover_hot_state.as_slice(),
-        "nns-vesl-prover-test",
+        "nns-prover-test",
         Some(tmp.path().to_path_buf()),
     )
     .await
@@ -212,7 +212,7 @@ fn synthetic_claim(
     }
 }
 
-async fn peek_last_proved_digest(state: &nns_vesl::state::SharedState) -> Vec<u8> {
+async fn peek_last_proved_digest(state: &nns::state::SharedState) -> Vec<u8> {
     let mut k = state.kernel.lock().await;
     let slab = k
         .peek(build_scan_state_peek())
@@ -223,10 +223,10 @@ async fn peek_last_proved_digest(state: &nns_vesl::state::SharedState) -> Vec<u8
         .last_proved_digest
 }
 
-/// Path Y: inject a successful claim into the kernel [`nns_vesl::chain_follower`]-style
+/// Path Y: inject a successful claim into the kernel [`nns::chain_follower`]-style
 /// (`%scan-block` + synthetic claims), matching production registration. Legacy
 /// `POST /register` + `POST /claim` are removed — the HTTP API is read-only.
-async fn register_name_via_scan(state: &nns_vesl::state::SharedState, addr: &str, name: &str) {
+async fn register_name_via_scan(state: &nns::state::SharedState, addr: &str, name: &str) {
     let treasury = fee_for_name(name);
     let tx_byte = name.bytes().fold(0x07_u8, |a, b| a.wrapping_add(b));
 
@@ -401,7 +401,7 @@ async fn phase1_redo_verify_inner_proof_wall_clock() {
         bad_fx.len(),
         bad_fx
             .iter()
-            .filter_map(nns_vesl::kernel::effect_tag)
+            .filter_map(nns::kernel::effect_tag)
             .collect::<Vec<_>>()
     );
 
@@ -451,7 +451,7 @@ async fn phase1_redo_verify_inner_proof_wall_clock() {
     for (i, e) in vfx.iter().enumerate() {
         println!(
             "[phase1-redo] verify poke effect {i}: {:?}",
-            nns_vesl::kernel::effect_tag(e)
+            nns::kernel::effect_tag(e)
         );
     }
 
@@ -731,12 +731,12 @@ async fn y3_genesis_proof_verifiable_by_light_verify_path() {
     };
     let effect_tags: Vec<_> = genesis_efx
         .iter()
-        .filter_map(nns_vesl::kernel::effect_tag)
+        .filter_map(nns::kernel::effect_tag)
         .collect();
     if let Some(trace_jam) = first_prove_failed(&genesis_efx) {
         panic!(
             "genesis prove failed: {}",
-            nns_vesl::kernel::decode_prove_failure(&trace_jam)
+            nns::kernel::decode_prove_failure(&trace_jam)
         );
     }
     assert!(
@@ -967,14 +967,14 @@ async fn y3_strict_transition_proof_effect() {
     // The key assertion: we got a real proof effect, not a failure.
     if first_recursive_transition_proof(&efx).is_none() {
         println!("\n==================== Y3 FIRST-TRANSITION FAILURE ====================");
-        if let Some(jam) = nns_vesl::kernel::first_prove_failed(&efx) {
+        if let Some(jam) = nns::kernel::first_prove_failed(&efx) {
             println!("Raw jam length: {} bytes", jam.len());
             println!("Decoded failure:\n{}\n", decode_prove_failure(&jam));
             // Also dump the first 64 bytes of the raw jam for manual inspection
             println!("First 64 bytes of jam (hex): {:02x?}", &jam[..jam.len().min(64)]);
         } else {
             println!("No %prove-failed effect found (unexpected). Effects were: {:?}",
-                efx.iter().filter_map(nns_vesl::kernel::effect_tag).collect::<Vec<_>>());
+                efx.iter().filter_map(nns::kernel::effect_tag).collect::<Vec<_>>());
         }
         println!("==================================================================\n");
         panic!(
@@ -1018,8 +1018,8 @@ async fn y3_strict_transition_proof_effect() {
 #[ignore]
 #[tokio::test]
 async fn y3_follower_attempts_recursive_transition_after_scan_block() {
-    use nns_vesl::chain_follower::apply_prefetched_scan_blocks_with_claims;
-    use nns_vesl::chain::ScanBlockFetch;
+    use nns::chain_follower::apply_prefetched_scan_blocks_with_claims;
+    use nns::chain::ScanBlockFetch;
 
     let (_tmp, state) = boot_nns_with_prover().await;
 
@@ -1034,7 +1034,7 @@ async fn y3_follower_attempts_recursive_transition_after_scan_block() {
 
     // 2. Prepare a minimal synthetic block + claims for the scan
     let block = ScanBlockFetch {
-        height: nns_vesl::chain::NNS_GENESIS_HEIGHT,
+        height: nns::chain::NNS_GENESIS_HEIGHT,
         parent: vec![0u8; 40],
         page_digest: vec![42u8; 40],
         page_tx_ids: vec![],

@@ -543,7 +543,7 @@ impl ClaimBundle {
     /// Typical wallet flow:
     ///
     /// ```no_run
-    /// use nns_vesl::{freshness::Freshness, kernel::ClaimBundle};
+    /// use nns::{freshness::Freshness, kernel::ClaimBundle};
     /// # fn example(bundle: &ClaimBundle, chain_tip_height: u64) -> Result<(), Box<dyn std::error::Error>> {
     /// let policy = Freshness::default(); // 20 blocks
     /// bundle.check_freshness(chain_tip_height, policy)?;

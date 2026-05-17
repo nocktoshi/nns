@@ -1,4 +1,4 @@
-::  hoon/app/names-test.hoon — compile-time tests for nns-vesl's
+::  hoon/app/names-test.hoon — compile-time tests for nns's
 ::  verification gate.
 ::
 ::  G1 name format and fee schedule come from `nns-predicates`; Merkle

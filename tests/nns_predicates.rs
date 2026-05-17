@@ -10,8 +10,8 @@ use common::{
     anchor_header, boot_kernel, digest, good_claim_bundle, log_predicate_api,
     poke_validate_claim, poke_verify_chain_link, poke_verify_tx_in_page, BOOT_PHASE3,
 };
-use nns_vesl::kernel::{ClaimBundle, ValidateClaimResult};
-use nns_vesl::payment::fee_for_name;
+use nns::kernel::{ClaimBundle, ValidateClaimResult};
+use nns::payment::fee_for_name;
 
 const CASE_MATRIX: &str = "validate_claim_bundle_matrix";
 

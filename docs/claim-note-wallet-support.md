@@ -28,7 +28,7 @@ Until wallets ship first-class NoteData UX, operators rely on **nockchain-wallet
 - **gRPC (or indexer) paths that return `note_data` on outputs** — required for NNS to see claims.  
 - **Transaction construction** that attaches **`blob`** per upstream packing — mirror [`wallet-tx-builder`](https://github.com/nockchain/nockchain/blob/master/crates/wallet-tx-builder/src/note_data.rs).
 
-`Cargo.toml` uses **`../nockchain`**; keep that checkout compatible with the contract in [`docs/nockchain-fork-for-nns.md`](nockchain-fork-for-nns.md). Nockchain fork work is **out of tree** for nns-vesl.
+`Cargo.toml` uses **`../nockchain`**; keep that checkout compatible with the contract in [`docs/nockchain-fork-for-nns.md`](nockchain-fork-for-nns.md). Nockchain fork work is **out of tree** for nns.
 
 ## See also
 

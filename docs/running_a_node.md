@@ -13,8 +13,8 @@ For the full architecture and design rationale, see
 
 ```bash
 # clone nns repo (Hoon deps fetched by nockup — see nockapp.toml)
-git clone https://github.com/nocktoshi/nns-vesl.git
-cd nns-vesl
+git clone https://github.com/nocktoshi/nns.git
+cd nns
 make install                                  # builds kernel + nns binary
 # start server
 nns                                           # starts on 127.0.0.1:3000
@@ -46,8 +46,8 @@ rustup toolchain list | grep nightly
 ## 2. Install
 
 ```bash
-git clone https://github.com/nocktoshi/nns-vesl.git
-cd nns-vesl
+git clone https://github.com/nocktoshi/nns.git
+cd nns
 make install
 ```
 
@@ -59,12 +59,12 @@ What `make install` does (see `Makefile`):
   Nockchain @ `ff6dd2d…`), then `make sync-hoon-from-nockup` **rsync**s those
   caches into `hoon/{common,dat,jams,lib}` (real files, not symlinks), runs
   `hoonc --new hoon/app/app.hoon hoon/` → `nns.jam` in the repo root, installs
-  it to `~/.local/lib/nns-vesl/nns.jam`, and removes the materialized
+  it to `~/.local/lib/nns/nns.jam`, and removes the materialized
   `hoon/{common,dat,jams,lib}` tree (sources remain under `hoon/packages/`).
 - **`install-bin-lib`**: `cargo +nightly build --release` →
-  `~/.local/lib/nns-vesl/nns-vesl`.
+  `~/.local/lib/nns/nns`.
 - **`install-wrappers`**: `nns` wrapper (sets `NNS_KERNEL_JAM` to the installed
-  jam) plus `nns-vesl` symlink in `~/.local/bin`; appends `~/.local/bin` to
+  jam) plus `nns` symlink in `~/.local/bin`; appends `~/.local/bin` to
   `PATH` in `~/.zshrc` when missing.
 
 Hoon-only rebuild after editing `hoon/app/`: `make install-kernel`. Rust-only:
@@ -152,7 +152,7 @@ nns
 Log lines on startup (all on stdout + `tracing`):
 
 ```
-=== nns-vesl ===
+=== nns ===
   settlement mode: local
   payment address: 8s29X...WPzTT5
 I (21:45:31) [no] kernel::boot: kernel: starting
@@ -177,7 +177,7 @@ Runtime env vars the binary respects:
 | `API_PORT`         | `3000`      | HTTP port                           |
 | `NNS_CONFIG`        | `nns.toml` | config file path                    |
 | `NNS_DATA_DIR`     | `.`         | where `.nns-data/` is created       |
-| `NNS_KERNEL_JAM`   | `~/.local/lib/nns-vesl/nns.jam` (set by `nns` wrapper) | kernel jam path |
+| `NNS_KERNEL_JAM`   | `~/.local/lib/nns/nns.jam` (set by `nns` wrapper) | kernel jam path |
 | `RUST_LOG`         | `info`      | log verbosity — see [§ Logs](#logs) |
 | `NNS_ENABLE_ADMIN` | unset       | enable admin routes (debug only)    |
 
@@ -248,7 +248,7 @@ kernel or follower health — use `/status` for that.
 Default is `RUST_LOG=info`. For follower-specific debugging:
 
 ```bash
-RUST_LOG=info,nns_vesl::chain_follower=trace,nns_vesl::chain=debug nns
+RUST_LOG=info,nns::chain_follower=trace,nns::chain=debug nns
 ```
 
 Structured fields the follower emits:
@@ -283,7 +283,7 @@ If `/status.follower.chain_tip_height == null` in chain mode:
 grpcurl -plaintext localhost:5556 list | head -5
 
 # 2. crank tracing to see what the follower attempts
-RUST_LOG=info,nns_vesl::chain_follower=trace,nns_vesl::chain=debug nns
+RUST_LOG=info,nns::chain_follower=trace,nns::chain=debug nns
 
 # 3. watch the scanner move
 watch -n 2 'curl -s http://127.0.0.1:3000/status | jq .scan_state'

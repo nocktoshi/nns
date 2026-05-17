@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
-use nns_vesl::{api, state::AppState};
+use nns::{api, state::AppState};
 use nockapp::kernel::boot;
 use nockapp::NockApp;
 use tower::util::ServiceExt;
@@ -19,14 +19,14 @@ fn kernel_jam() -> Vec<u8> {
     }
 }
 
-async fn setup() -> (tempfile::TempDir, nns_vesl::state::SharedState) {
+async fn setup() -> (tempfile::TempDir, nns::state::SharedState) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let cli = boot::default_boot_cli(true);
     let app: NockApp = boot::setup(
         &kernel_jam(),
         cli,
         &[],
-        "nns-vesl-test",
+        "nns-test",
         Some(tmp.path().to_path_buf()),
     )
     .await
@@ -102,7 +102,7 @@ async fn status_exposes_scan_state_and_follower() {
     assert_eq!(follower["max_advance_batch"], 1);
     assert_eq!(
         follower["nns_genesis_height"],
-        nns_vesl::chain::NNS_GENESIS_HEIGHT
+        nns::chain::NNS_GENESIS_HEIGHT
     );
 }
 

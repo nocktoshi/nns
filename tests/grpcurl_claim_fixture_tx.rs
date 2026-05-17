@@ -23,14 +23,14 @@ use nockapp_grpc::pb::public::v2::transaction_output::AmountRequired;
 use nockapp_grpc::pb::public::v2::{
     TransactionDetails, TransactionInput, TransactionOutput,
 };
-use nns_vesl::chain::{canonical_z_set_tx_order, ScanBlockFetch, NNS_GENESIS_HEIGHT as H0};
-use nns_vesl::chain_follower::{apply_prefetched_scan_blocks, claims_from_fetch};
-use nns_vesl::claim_note::ClaimNoteV1;
-use nns_vesl::kernel::{
+use nns::chain::{canonical_z_set_tx_order, ScanBlockFetch, NNS_GENESIS_HEIGHT as H0};
+use nns::chain_follower::{apply_prefetched_scan_blocks, claims_from_fetch};
+use nns::claim_note::ClaimNoteV1;
+use nns::kernel::{
     build_scan_block_poke, build_scan_state_peek, decode_scan_state, first_scan_block_done,
 };
-use nns_vesl::payment::fee_for_name;
-use nns_vesl::state::AppState;
+use nns::payment::fee_for_name;
+use nns::state::AppState;
 use nockchain_client_rs::{NoteData, NoteDataEntry};
 use vesl_core::SettlementConfig;
 
@@ -171,7 +171,7 @@ fn digest40(seed: u8) -> Vec<u8> {
 #[test]
 fn grpcurl_fixture_blob_wire_unpacks() {
     let wire = include_bytes!("fixtures/grpcurl_claim_blob.wire");
-    let inner = nns_vesl::packed_blob::unpack_wallet_blob_jam(wire).expect("unpack wallet blob");
+    let inner = nns::packed_blob::unpack_wallet_blob_jam(wire).expect("unpack wallet blob");
     assert_eq!(
         std::str::from_utf8(&inner).unwrap(),
         "nns/v1/claim/nockchain.nock"
@@ -184,7 +184,7 @@ fn grpcurl_fixture_claim_decodes_and_matches_tx_id() {
     assert_eq!(claim.name, "nockchain.nock");
     assert!(claim.owner.is_empty() && claim.tx_hash.is_empty());
     let details = fixture_transaction_details();
-    let claims = claims_from_fetch(&nns_vesl::chain::ScanBlockFetch {
+    let claims = claims_from_fetch(&nns::chain::ScanBlockFetch {
         height: 0,
         page_digest: vec![],
         parent: vec![],
@@ -197,7 +197,7 @@ fn grpcurl_fixture_claim_decodes_and_matches_tx_id() {
     assert_eq!(claims[0].owner, GRPCURL_FIXTURE_OWNER_B58);
     assert_eq!(
         claims[0].tx_hash,
-        nns_vesl::chain::base58_hash_to_atom_bytes(
+        nns::chain::base58_hash_to_atom_bytes(
             "8FGo74Qm29C8XTsDTdaaeXvGix2rS7reWQuF2Qj84GypetGW3ufFB5d"
         )
         .unwrap()
@@ -213,7 +213,7 @@ fn grpcurl_fixture_claim_decodes_and_matches_tx_id() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn grpcurl_fixture_accumulator_inserts_claimed_name() {
     INIT_TRACING.call_once(|| {
-        nns_vesl::apply_nns_config();
+        nns::apply_nns_config();
         let cli = boot::default_boot_cli(true);
         boot::init_default_tracing(&cli);
     });
@@ -222,7 +222,7 @@ async fn grpcurl_fixture_accumulator_inserts_claimed_name() {
     let details = fixture_transaction_details();
 
     let tx_atom =
-        nns_vesl::chain::base58_hash_to_atom_bytes(&details.tx_id).expect("tx id atom");
+        nns::chain::base58_hash_to_atom_bytes(&details.tx_id).expect("tx id atom");
     let page_tx_ids = canonical_z_set_tx_order(vec![tx_atom.clone()]).expect("z-set order");
 
     let tmp = tempfile::tempdir().expect("tempdir");

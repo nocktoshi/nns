@@ -5,12 +5,12 @@
 
 use std::sync::Arc;
 
-use nns_vesl::chain::NNS_GENESIS_HEIGHT as H0;
-use nns_vesl::kernel::{
+use nns::chain::NNS_GENESIS_HEIGHT as H0;
+use nns::kernel::{
     build_scan_block_poke, build_scan_state_peek, decode_scan_state, first_scan_block_done,
     first_scan_block_error,
 };
-use nns_vesl::state::AppState;
+use nns::state::AppState;
 use nockapp::kernel::boot;
 use nockapp::kernel::boot::NockStackSize;
 use nockapp::wire::{SystemWire, Wire};
@@ -26,12 +26,12 @@ fn kernel_jam() -> Vec<u8> {
 
 static TRACING_INIT: std::sync::Once = std::sync::Once::new();
 
-async fn boot_kernel() -> (tempfile::TempDir, nns_vesl::state::SharedState) {
+async fn boot_kernel() -> (tempfile::TempDir, nns::state::SharedState) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut cli = boot::default_boot_cli(true);
     cli.stack_size = NockStackSize::Large;
     TRACING_INIT.call_once(|| {
-        nns_vesl::apply_nns_config();
+        nns::apply_nns_config();
         let _ = boot::init_default_tracing(&cli);
     });
     let prover_hot_state = zkvm_jetpack::hot::produce_prover_hot_state();
@@ -56,7 +56,7 @@ fn digest(seed: u8) -> Vec<u8> {
     vec![seed; 40]
 }
 
-async fn peek_scan(state: &nns_vesl::state::SharedState) -> nns_vesl::kernel::ScanState {
+async fn peek_scan(state: &nns::state::SharedState) -> nns::kernel::ScanState {
     let mut k = state.kernel.lock().await;
     let slab = k
         .peek(build_scan_state_peek())

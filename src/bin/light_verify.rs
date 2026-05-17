@@ -1,6 +1,6 @@
 //! Path Y4 NNS light-client verifier (offline).
 //!
-//! Verifies a [`nns_vesl::wallet_y4::PathY4LookupBundle`] from stdin in order:
+//! Verifies a [`nns::wallet_y4::PathY4LookupBundle`] from stdin in order:
 //!
 //! 1. **Recursive Vesl STARK** — non-empty `recursive_proof_hex` plus subject /
 //!    formula JAMs → `%verify-stark-explicit` via `--kernel-jam` (exit **7** on failure).
@@ -19,10 +19,10 @@
 
 use std::io::Read;
 
-use nns_vesl::kernel::{
+use nns::kernel::{
     verify_accumulator_snapshot_blocking, verify_stark_explicit_blocking,
 };
-use nns_vesl::wallet_y4::{
+use nns::wallet_y4::{
     hex_decode_even, verify_header_chain_to_checkpoint, AccumulatorEntryJson, CheckpointConfig,
     PathY4LookupBundle,
 };

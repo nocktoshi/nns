@@ -26,8 +26,8 @@ use common::{
     anchor_header, boot_kernel, digest, fee_for_name_via_kernel, good_claim_bundle,
     poke_validate_claim, poke_verify_chain_link, poke_verify_tx_in_page, BOOT_PHASE3,
 };
-use nns_vesl::kernel::{AnchorHeader, ValidateClaimResult};
-use nns_vesl::payment::fee_for_name;
+use nns::kernel::{AnchorHeader, ValidateClaimResult};
+use nns::payment::fee_for_name;
 
 /// Cross-repo parity: every Rust `payment::fee_for_name` input must
 /// return the same u64 from the kernel's `fee-for-name:nns-predicates`.

@@ -1,6 +1,6 @@
 # Nockchain sibling checkout (`../nockchain`)
 
-`nns-vesl` uses **path dependencies** on a local **`../nockchain`** tree (`Cargo.toml`: `nockapp`, `nockapp-grpc`, `nockchain-types`, `zkvm-jetpack`, …). You maintain that checkout in your own repo; **this document only states the contract NNS needs** — not how to branch or merge your fork.
+`nns` uses **path dependencies** on a local **`../nockchain`** tree (`Cargo.toml`: `nockapp`, `nockapp-grpc`, `nockchain-types`, `zkvm-jetpack`, …). You maintain that checkout in your own repo; **this document only states the contract NNS needs** — not how to branch or merge your fork.
 
 ## Contract: what Path Y needs
 

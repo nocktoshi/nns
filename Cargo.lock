@@ -3733,7 +3733,7 @@ name = "murmur3"
 version = "0.5.2"
 
 [[package]]
-name = "nns-vesl"
+name = "nns"
 version = "0.1.0"
 dependencies = [
  "anyhow",

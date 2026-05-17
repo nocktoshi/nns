@@ -1,6 +1,6 @@
 //! Path Y4 `light_verify` CLI integration tests.
 //!
-//! Drives the `light_verify` binary with [`PathY4LookupBundle`](nns_vesl::wallet_y4::PathY4LookupBundle)
+//! Drives the `light_verify` binary with [`PathY4LookupBundle`](nns::wallet_y4::PathY4LookupBundle)
 //! JSON on stdin and pinned `--checkpoint-*` flags.
 
 use std::io::Write;

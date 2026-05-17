@@ -1,4 +1,4 @@
-//! Mock “RPC” by building [`nns_vesl::chain::ScanBlockFetch`] in memory.
+//! Mock “RPC” by building [`nns::chain::ScanBlockFetch`] in memory.
 //!
 //! ## Full-chain claim scan (`%scan-block` with passing claims)
 //!
@@ -24,17 +24,17 @@ use std::sync::{Arc, Once};
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use serde_json::{json, Value};
-use nns_vesl::chain::NNS_GENESIS_HEIGHT as H0;
-use nns_vesl::chain::ScanBlockFetch;
-use nns_vesl::chain_follower::{
+use nns::chain::NNS_GENESIS_HEIGHT as H0;
+use nns::chain::ScanBlockFetch;
+use nns::chain_follower::{
     apply_prefetched_scan_blocks, apply_prefetched_scan_blocks_with_claims,
 };
-use nns_vesl::kernel::{
+use nns::kernel::{
     build_scan_block_poke, build_scan_state_peek, first_scan_block_done, first_scan_block_error,
     ClaimCandidate, ClaimWitness, decode_scan_state,
 };
-use nns_vesl::payment::{fee_for_name, TREASURY_LOCK_ROOT_B58};
-use nns_vesl::{api, state::AppState};
+use nns::payment::{fee_for_name, TREASURY_LOCK_ROOT_B58};
+use nns::{api, state::AppState};
 use nockapp::kernel::boot;
 use nockapp::kernel::boot::NockStackSize;
 use nockapp::wire::{SystemWire, Wire};
@@ -95,12 +95,12 @@ fn synthetic_claim(
     }
 }
 
-async fn setup() -> (tempfile::TempDir, nns_vesl::SharedState) {
+async fn setup() -> (tempfile::TempDir, nns::SharedState) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut cli = boot::default_boot_cli(true);
     cli.stack_size = NockStackSize::Large;
     INIT_TRACING.call_once(|| {
-        nns_vesl::apply_nns_config();
+        nns::apply_nns_config();
         let trace_cli = boot::default_boot_cli(true);
         boot::init_default_tracing(&trace_cli);
     });
@@ -109,7 +109,7 @@ async fn setup() -> (tempfile::TempDir, nns_vesl::SharedState) {
         &kernel_jam(),
         cli,
         prover_hot_state.as_slice(),
-        "nns-vesl-scan-mock",
+        "nns-scan-mock",
         Some(tmp.path().to_path_buf()),
     )
     .await
@@ -122,7 +122,7 @@ async fn setup() -> (tempfile::TempDir, nns_vesl::SharedState) {
     (tmp, state)
 }
 
-async fn peek_last_proved_digest(state: &nns_vesl::SharedState) -> Vec<u8> {
+async fn peek_last_proved_digest(state: &nns::SharedState) -> Vec<u8> {
     let mut k = state.kernel.lock().await;
     let slab = k
         .peek(build_scan_state_peek())
@@ -157,7 +157,7 @@ fn log_accumulator_http_response(case_id: &str, uri: &str, status: StatusCode, b
 }
 
 async fn get_accumulator_json(
-    state: nns_vesl::SharedState,
+    state: nns::SharedState,
     name: &str,
     log_case: &str,
 ) -> Value {

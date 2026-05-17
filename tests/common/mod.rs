@@ -21,13 +21,13 @@ use nockapp::wire::{SystemWire, Wire};
 use nockapp::NockApp;
 use vesl_core::SettlementConfig;
 
-use nns_vesl::kernel::{
+use nns::kernel::{
     build_fee_for_name_peek, build_validate_claim_poke, build_verify_chain_link_poke,
     build_verify_tx_in_page_poke, decode_fee_for_name, first_chain_link_result,
     first_tx_in_page_result, first_validate_claim_result, AnchorHeader, ClaimBundle,
     ValidateClaimResult,
 };
-use nns_vesl::state::AppState;
+use nns::state::AppState;
 use serde_json::json;
 
 static TRACING_INIT: Once = Once::new();
@@ -66,7 +66,7 @@ pub fn log_predicate_api(case_id: &str, operation: &str, response: &str) {
 
 fn init_tracing_once() {
     TRACING_INIT.call_once(|| {
-        nns_vesl::apply_nns_config();
+        nns::apply_nns_config();
         let cli = boot::default_boot_cli(true);
         boot::init_default_tracing(&cli);
     });
@@ -76,7 +76,7 @@ fn init_tracing_once() {
 /// shares one tracing initializer via [`TRACING_INIT`].
 pub async fn boot_kernel(
     app_label: &'static str,
-) -> (tempfile::TempDir, nns_vesl::state::SharedState) {
+) -> (tempfile::TempDir, nns::state::SharedState) {
     init_tracing_once();
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut cli = boot::default_boot_cli(true);
@@ -99,7 +99,7 @@ pub async fn boot_kernel(
     (tmp, state)
 }
 
-pub async fn fee_for_name_via_kernel(state: &nns_vesl::state::SharedState, name: &str) -> u64 {
+pub async fn fee_for_name_via_kernel(state: &nns::state::SharedState, name: &str) -> u64 {
     let mut k = state.kernel.lock().await;
     let res = k
         .peek(build_fee_for_name_peek(name))
@@ -122,7 +122,7 @@ pub fn anchor_header(height: u64, seed: u8, parent_seed: u8) -> AnchorHeader {
 }
 
 pub async fn poke_verify_chain_link(
-    state: &nns_vesl::state::SharedState,
+    state: &nns::state::SharedState,
     case_id: &str,
     claim_digest: &[u8],
     headers: &[AnchorHeader],
@@ -141,7 +141,7 @@ pub async fn poke_verify_chain_link(
 }
 
 pub async fn poke_verify_tx_in_page(
-    state: &nns_vesl::state::SharedState,
+    state: &nns::state::SharedState,
     case_id: &str,
     page_digest: &[u8],
     tx_ids: &[Vec<u8>],
@@ -177,7 +177,7 @@ pub fn good_claim_bundle() -> ClaimBundle {
         page_tx_ids: vec![tx_hash, other_tx],
         anchored_tip: page_digest,
         anchored_tip_height: 0,
-        witness: nns_vesl::kernel::ClaimWitness {
+        witness: nns::kernel::ClaimWitness {
             tx_id: vec![0x07],
             spender_pkh: b"owner-address".to_vec(),
             treasury_amount: 327_680_000,
@@ -187,7 +187,7 @@ pub fn good_claim_bundle() -> ClaimBundle {
 }
 
 pub async fn poke_validate_claim(
-    state: &nns_vesl::state::SharedState,
+    state: &nns::state::SharedState,
     case_id: &str,
     bundle: &ClaimBundle,
 ) -> ValidateClaimResult {

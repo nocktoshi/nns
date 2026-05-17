@@ -8,15 +8,15 @@ use std::sync::{Arc, Once};
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use serde_json::Value;
-use nns_vesl::chain::{
+use nns::chain::{
     canonical_z_set_tx_order, tip5_hash_to_tx_atom_bytes, NNS_GENESIS_HEIGHT as H0,
 };
-use nns_vesl::chain_follower::apply_prefetched_scan_blocks_with_claims;
-use nns_vesl::kernel::build_scan_state_peek;
-use nns_vesl::kernel::{decode_scan_state, ClaimCandidate, ClaimWitness};
-use nns_vesl::payment::{fee_for_name, TREASURY_LOCK_ROOT_B58};
-use nns_vesl::state::AppState;
-use nns_vesl::{api, chain::ScanBlockFetch};
+use nns::chain_follower::apply_prefetched_scan_blocks_with_claims;
+use nns::kernel::build_scan_state_peek;
+use nns::kernel::{decode_scan_state, ClaimCandidate, ClaimWitness};
+use nns::payment::{fee_for_name, TREASURY_LOCK_ROOT_B58};
+use nns::state::AppState;
+use nns::{api, chain::ScanBlockFetch};
 use nockapp::kernel::boot;
 use nockapp::kernel::boot::NockStackSize;
 use nockchain_types::tx_engine::common::Hash as Tip5Hash;
@@ -79,12 +79,12 @@ fn claim40(
     }
 }
 
-async fn setup() -> (tempfile::TempDir, nns_vesl::SharedState) {
+async fn setup() -> (tempfile::TempDir, nns::SharedState) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut cli = boot::default_boot_cli(true);
     cli.stack_size = NockStackSize::Large;
     INIT_TRACING.call_once(|| {
-        nns_vesl::apply_nns_config();
+        nns::apply_nns_config();
         let trace_cli = boot::default_boot_cli(true);
         boot::init_default_tracing(&trace_cli);
     });
@@ -93,7 +93,7 @@ async fn setup() -> (tempfile::TempDir, nns_vesl::SharedState) {
         &kernel_jam(),
         cli,
         prover_hot_state.as_slice(),
-        "nns-vesl-zset-order",
+        "nns-zset-order",
         Some(tmp.path().to_path_buf()),
     )
     .await
@@ -106,7 +106,7 @@ async fn setup() -> (tempfile::TempDir, nns_vesl::SharedState) {
     (tmp, state)
 }
 
-async fn peek_last_proved_digest(state: &nns_vesl::SharedState) -> Vec<u8> {
+async fn peek_last_proved_digest(state: &nns::SharedState) -> Vec<u8> {
     let mut k = state.kernel.lock().await;
     let slab = k
         .peek(build_scan_state_peek())
@@ -117,7 +117,7 @@ async fn peek_last_proved_digest(state: &nns_vesl::SharedState) -> Vec<u8> {
         .last_proved_digest
 }
 
-async fn get_accumulator_owner(state: nns_vesl::SharedState, name: &str) -> String {
+async fn get_accumulator_owner(state: nns::SharedState, name: &str) -> String {
     let router = api::router(state);
     let uri = format!("/accumulator/{name}");
     let req = Request::builder()

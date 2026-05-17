@@ -1,16 +1,16 @@
-//! nns-vesl hull binary.
+//! nns hull binary.
 
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use nns_vesl::{api, state::AppState};
+use nns::{api, state::AppState};
 use nockapp::kernel::boot;
 use nockapp::NockApp;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    nns_vesl::apply_nns_config();
+    nns::apply_nns_config();
 
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
@@ -36,11 +36,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None, // default_signing_key (unused for local)
     );
 
-    println!("=== nns-vesl ===");
+    println!("=== nns ===");
     println!("  settlement mode: {}", settlement.mode);
     println!(
         "  nns genesis height (protocol): {}",
-        nns_vesl::chain::NNS_GENESIS_HEIGHT
+        nns::chain::NNS_GENESIS_HEIGHT
     );
 
     // --- Boot the kernel ---
@@ -81,7 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  state dir: {}", state_dir.display());
 
     let state = Arc::new(AppState::new(app, state_dir, settlement));
-    let _follower = nns_vesl::chain_follower::spawn(state.clone());
+    let _follower = nns::chain_follower::spawn(state.clone());
 
     // --- Start HTTP server ---
     let port: u16 = std::env::var("API_PORT")

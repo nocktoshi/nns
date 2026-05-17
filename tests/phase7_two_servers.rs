@@ -5,11 +5,11 @@
 
 use std::sync::Arc;
 
-use nns_vesl::chain::NNS_GENESIS_HEIGHT as H0;
-use nns_vesl::kernel::{
+use nns::chain::NNS_GENESIS_HEIGHT as H0;
+use nns::kernel::{
     build_scan_block_poke, build_scan_state_peek, decode_scan_state, first_scan_block_done,
 };
-use nns_vesl::state::{AppState, SharedState};
+use nns::state::{AppState, SharedState};
 use nockapp::kernel::boot;
 use nockapp::kernel::boot::NockStackSize;
 use nockapp::wire::{SystemWire, Wire};
@@ -30,7 +30,7 @@ async fn boot_kernel(name: &str) -> (tempfile::TempDir, SharedState) {
     let mut cli = boot::default_boot_cli(true);
     cli.stack_size = NockStackSize::Large;
     TRACING_INIT.call_once(|| {
-        nns_vesl::apply_nns_config();
+        nns::apply_nns_config();
         let _ = boot::init_default_tracing(&cli);
     });
     let prover_hot_state = zkvm_jetpack::hot::produce_prover_hot_state();

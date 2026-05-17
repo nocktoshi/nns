@@ -24,7 +24,7 @@ use crate::kernel::{
 use crate::payment::{fee_for_name, sum_treasury_outputs_v1, TREASURY_LOCK_ROOT_B58};
 use crate::state::SharedState;
 
-/// Hex prefix for Tip5 atoms in logs (`RUST_LOG=nns_vesl::chain_follower=debug`).
+/// Hex prefix for Tip5 atoms in logs (`RUST_LOG=nns::chain_follower=debug`).
 fn atom_hex_preview(bytes: &[u8], prefix_len: usize) -> String {
     let n = prefix_len.min(bytes.len());
     let hex: String = bytes[..n].iter().map(|b| format!("{b:02x}")).collect();
