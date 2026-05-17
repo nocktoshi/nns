@@ -846,16 +846,6 @@ async fn y3_transition_proof_verifiable_by_light_verify_path() {
     println!("[y3-transition] SUCCESS — transition proof is verifiable by the light_verify client path.");
 }
 
-#[allow(dead_code)]
-fn cause_tuple_field(slab: &nockapp::noun::slab::NounSlab, field_idx: usize) -> Noun {
-    use nns_vesl::noun_access::ScopedNoun;
-    let mut sn = ScopedNoun::from_slab(slab);
-    for _ in 0..field_idx {
-        sn = sn.tail().expect("cause tuple cell");
-    }
-    sn.head().expect("cause field cell").noun
-}
-
 /// Stricter version of the transition test.
 ///
 /// This test asserts that we actually receive a successful

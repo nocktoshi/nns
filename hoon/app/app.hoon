@@ -286,7 +286,8 @@
 ::    genesis:  [acc [height digest]]                         → 2, 3, 6
 ::    empty:    [prev-h page-d want-h page-d]                 → 2, 6, 14, 30
 ::    full:     proof-len prev-h digest acc-tag cand-tag block want-h want-d
-::              → 2, 6, 14, 30, 62, 126, 254, 510 (tags = first limb of name-key)
+::              → 2, 6, 14, 30, 62, 126, 254, 510
+::              (digest + tags = first @ux limb — STARK memory rejects 40-byte atoms)
 ::
 ++  trace-pick
   |=  axis=@
@@ -342,7 +343,7 @@
       (trace-eq (trace-pick 254) (trace-lit want-h))
     (trace-eq (trace-pick 510) (trace-pick 14))
   ::  FWW: no cand tag (62 = 0), or acc tag (30) differs from cand tag (62).
-  [6 (trace-eq (trace-pick 62) (trace-lit 0)) [1 0] [6 (trace-eq (trace-pick 30) (trace-pick 62)) [1 1] [1 0]]]
+  [6 (trace-eq (trace-pick 62) (trace-lit 0x0)) [1 0] [6 (trace-eq (trace-pick 30) (trace-pick 62)) [1 1] [1 0]]]
 ::
 ::  The base-case recursive proof attests:
 ::    - accumulator contains the genesis TLD row (`nock`)
@@ -396,6 +397,15 @@
   ^-  @ux
   =/  [k0=@ux k1=@ux k2=@ux k3=@ux k4=@ux]  k
   k0
+::
+::  First 8 bytes of a digest atom for trace subjects (full Tip5 may be 40B).
+::
+++  digest-limb
+  |=  d=@
+  ^-  @ux
+  ?:  (lte (met 3 d) 8)
+    ;;(@ux d)
+  (cut 3 [0 8] d)
 ::
 ::  First z-map row tag from ++z-map-to-name-list output (0 if empty).
 ::
@@ -547,7 +557,7 @@
       ==
   ^-  [subject=* formula=*]
   =/  want-height=@ud  +(prev-height)
-  =/  page-d=@ux  digest.pag
+  =/  page-d=@ux  (digest-limb digest.pag)
   ::  Empty claims: 4-tuple subject (height/digest only).
   ?:  ?=(@ claims)
     =/  sub=*  [prev-height page-d want-height page-d]
@@ -567,15 +577,16 @@
     ?:  ?=(@ prev-proof)
       (met 3 prev-proof)
     0
+  =/  dig=@ux  (digest-limb digest.pag)
   =/  sub=*
     :*  proof-len
         prev-height
-        digest.pag
+        dig
         acc-tag
         cand-tag
         block-proof
         want-height
-        want-digest
+        (digest-limb want-digest)
     ==
   =/  form=*  (transition-trace-formula-full prev-height want-height)
   [sub form]
