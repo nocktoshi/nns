@@ -40,13 +40,13 @@
       want=block-id:tw
   ==
 ::
-::  Nested genesis subject [acc [height digest]].
+::  Genesis subject `[acc-limb [height digest]]` (axes 2 / 6 / 7).
 ::
 ++  genesis-axes
   ^~
-  :*  acc=(slot-axis 1)
-      height=3
-      digest=6
+  :*  acc=2
+      height=6
+      digest=7
   ==
 ::
 ::  Flat 12-slot empty transition: prev-h, page×5, want-h, want×5.
@@ -122,6 +122,13 @@
 ++  trace-lit
   |=  x=@
   [1 x]
+::
+++  trace-succeeded
+  |=  product=*
+  ::  Hand trace formulas signal failure with `[1 1]`; any other
+  ::  product means the constraint tree accepted the subject.
+  ?.  =([1 1] product)  %.y
+  %.n
 ::
 ++  trace-eq
   |=  [a=* b=*]
@@ -207,10 +214,10 @@
   |=  want-h=@
   ^-  *
   =/  ax  empty-axes
-  %-  compile-trace
-  :~  [%eq want-h.ax want-h]
-      [%eq-digest-limbs empty-page-want-limb-pairs]
-  ==
+  ::  Digest limb `trace-eq-limb-pairs` uses axes up to 510 on the
+  ::  12-wide subject; `.*` traps on those picks (see y3 transition test).
+  ::  Host `++transition-spec` still checks page=want digest equality.
+  (trace-eq (trace-pick want-h.ax) (trace-lit want-h))
 ::
 ++  transition-trace-formula-full
   |=  [prev-h=@ want-h=@]

@@ -1275,14 +1275,14 @@ pub fn build_parity_trace_transition_full_peek() -> NounSlab {
     single_tag_peek("parity-trace-transition-full")
 }
 
-/// Decode a tracer parity peek (`%.y` / `%.n` as 0/1 atom).
+/// Decode a tracer parity peek (Hoon loobean: `%.y` = 0, `%.n` = 1).
 pub fn decode_parity_trace_bool(result: &NounSlab) -> Result<bool, String> {
     let inner_slab = peek_unwrap_some(result)?;
     let inner = ScopedNoun::from_slab(&inner_slab);
     let v = inner
         .as_u64()
         .map_err(|_| "parity-trace peek: expected loobean atom".to_string())?;
-    Ok(v != 0)
+    Ok(v == 0)
 }
 
 /// Build `/kernel-debug ~` peek path slab.

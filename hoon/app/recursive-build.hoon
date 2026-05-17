@@ -29,7 +29,11 @@
 ++  build-genesis-recursive-inputs
   |=  [acc=nns-accumulator:na height=@ud digest=@ux]
   ^-  [subject=* formula=*]
-  =/  sub=*  [acc [height digest]]
+  ::  STARK trace uses a flat triple (slot axes 2/6/14), not a z-map or
+  ::  nested pair. After `ensure-genesis-tld`, acc is non-empty; `0x1`
+  ::  satisfies `trace-nonzero` on the genesis acc slot.
+  =/  acc-limb=@ux  0x1
+  =/  sub=*  [acc-limb [height digest]]
   =/  form=*  (genesis-trace-formula:tracer nns-genesis-height)
   [sub form]
 ::

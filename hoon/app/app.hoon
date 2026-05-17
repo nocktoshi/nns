@@ -893,13 +893,11 @@
       =.  accumulator.state  (ensure-genesis-tld accumulator.state)
       =/  [subj=* form=*]
         (build-genesis-recursive-inputs:rb accumulator.state nns-genesis-height 0x0)
-      =/  dry-run
-        %-  mule  |.  .*(subj form)
-      ?.  ?=(%& -.dry-run)
-        :_  state
-        ~[[%prove-failed (jam p.dry-run)]]
-      =/  dry-product=*  p.dry-run
-      =/  dry-ok=?  ?=(%.y dry-product)
+      =/  dry-ok=?
+        =/  dry-run
+          %-  mule  |.  .*(subj form)
+        ?.  ?=(%& -.dry-run)  %.n
+        (trace-succeeded:tracer p.dry-run)
       =/  [br3=@ bh3=@]  (stark-bind state)
       =/  attempt
         %-  mule  |.
@@ -920,7 +918,10 @@
       =/  the-proof=proof:vp  p.pr
       =.  last-proved.state  `[subj form]
       =.  recursive-proof.state  `[the-proof subj form]
-      =.  last-proved-height.state  nns-genesis-height
+      ::  Do not advance the scan cursor here. `last-proved-height` /
+      ::  `last-proved-digest` stay at genesis boot (0 / 0x0) until the
+      ::  first `%scan-block` links to Nockchain; otherwise the follower
+      ::  prefetches height 63001 with parent checked against 0x0 and fails.
       :_  state
       ^-  (list effect)
       :~  [%genesis-recursive-dry-run-ok dry-ok]
@@ -984,14 +985,13 @@
             digest.pag
         ==
       ~&  ['chained' 'claims' (lent claims) 'subj' (met 3 (jam subj)) 'form' (met 3 (jam form))]
-      =/  dry-run
-        %-  mule  |.  .*(subj form)
-      ?.  ?=(%& -.dry-run)
-        ~&  ['chained' 'dry-run-failed']
-        :_  state
-        ~[[%prove-failed (jam p.dry-run)]]
-      =/  dry-product=*  p.dry-run
-      =/  dry-ok=?  ?=(%.y dry-product)
+      =/  dry-ok=?
+        =/  dry-run
+          %-  mule  |.  .*(subj form)
+        ?.  ?=(%& -.dry-run)
+          ~&  ['chained' 'dry-run-failed']
+          %.n
+        (trace-succeeded:tracer p.dry-run)
       =/  [br3=@ bh3=@]  (stark-bind state)
       =/  attempt
         %-  mule  |.

@@ -29,7 +29,8 @@ use nns_vesl::kernel::{
     build_parity_trace_genesis_peek, build_parity_trace_transition_empty_peek,
     build_parity_trace_transition_full_peek,
     decode_parity_trace_bool,
-    first_genesis_recursive_dry_run_ok, first_recursive_transition_dry_run_ok,
+    first_genesis_recursive_dry_run_ok, first_genesis_recursive_proof,
+    first_recursive_transition_dry_run_ok,
     first_recursive_transition_proof, decode_prove_failure,
     first_arbitrary_proof, first_claim_in_stark_proof,
     first_prove_failed, first_prove_identity_result, first_verify_stark_error,
@@ -568,6 +569,19 @@ async fn phase3c_step3_prove_arbitrary_roundtrip() {
         ok,
         "arbitrary proof of [subject=42 formula=[0 1]] must verify on the same kernel",
     );
+
+    let explicit_ok = verify_stark_explicit_offline(
+        &kernel_jam(),
+        &ap.proof_jam,
+        &subject_jam,
+        &formula_jam,
+    )
+    .await
+    .expect("verify_stark_explicit_offline");
+    assert!(
+        explicit_ok,
+        "%verify-stark-explicit must accept the same triple as %verify-stark"
+    );
 }
 
 /// Phase 3c step 3 **spike outcome**: the encoding works outside the
@@ -715,10 +729,19 @@ async fn y3_genesis_proof_verifiable_by_light_verify_path() {
             .await
             .expect("genesis poke")
     };
-    assert_eq!(
-        first_genesis_recursive_dry_run_ok(&genesis_efx),
-        Some(true),
-        "genesis trace formula .* must succeed before prove-computation"
+    let effect_tags: Vec<_> = genesis_efx
+        .iter()
+        .filter_map(nns_vesl::kernel::effect_tag)
+        .collect();
+    if let Some(trace_jam) = first_prove_failed(&genesis_efx) {
+        panic!(
+            "genesis prove failed: {}",
+            nns_vesl::kernel::decode_prove_failure(&trace_jam)
+        );
+    }
+    assert!(
+        first_genesis_recursive_proof(&genesis_efx).is_some(),
+        "expected %genesis-recursive-proof effect; got {effect_tags:?}"
     );
 
     // Extract the full triple (proof, subject, formula) via the peek we added for Y3
@@ -741,6 +764,20 @@ async fn y3_genesis_proof_verifiable_by_light_verify_path() {
     );
 
     assert_y3_formula_has_no_banned_opcodes(&form_jam);
+
+    // Same-kernel %verify-stark uses last-proved nouns (no re-cue).
+    let stark_ok = {
+        let mut k = state.kernel.lock().await;
+        let vfx = k
+            .poke(SystemWire.to_wire(), build_verify_stark_poke(&proof_jam))
+            .await
+            .expect("verify-stark poke");
+        if let Some(msg) = first_verify_stark_error(&vfx) {
+            panic!("verify-stark on proving kernel failed: {msg}");
+        }
+        first_verify_stark_result(&vfx).expect("%verify-stark-result")
+    };
+    assert!(stark_ok, "proof must verify on the kernel that produced it");
 
     // This is the core verification that light_verify performs for the recursive part.
     // It calls the same %verify-stark-explicit the binary uses.

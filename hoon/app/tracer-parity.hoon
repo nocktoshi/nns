@@ -20,12 +20,12 @@
 ++  parity-genesis-trace
   |=  [acc=nns-accumulator:na height=@ud digest=@ux]
   ^-  ?
+  ?.  (genesis-recursive-formula:rb acc height digest)  %.n
   =/  samp  (build-genesis-recursive-inputs:rb acc height digest)
   =/  dry-run
     %-  mule  |.  .*(-.samp +.samp)
   ?.  ?=(%& -.dry-run)  %.n
-  ?.  ?=(%.y p.dry-run)  %.n
-  (genesis-recursive-formula:rb acc height digest)
+  (trace-succeeded:tracer p.dry-run)
 ::
 ++  parity-transition-empty
   |=  [prev-height=@ud page-d=@ux old-acc=nns-accumulator:na]
@@ -36,13 +36,14 @@
     (empty-transition-subject:tracer prev-height page want-h page)
   =/  form=*
     (build-transition-trace-formula-empty:tracer want-h)
+  =/  pag=nns-page-summary:np  [page-d ~]
+  =/  claims=(list nns-claim:np)  ~
+  ?.  (transition-spec:rb 0x1 0 0 prev-height old-acc pag claims 0 want-h page-d)
+    %.n
   =/  dry-run
     %-  mule  |.  .*(subj form)
   ?.  ?=(%& -.dry-run)  %.n
-  ?.  ?=(%.y p.dry-run)  %.n
-  =/  pag=nns-page-summary:np  [page-d ~]
-  =/  claims=(list nns-claim:np)  ~
-  (transition-spec:rb 0x1 0 0 prev-height old-acc pag claims 0 want-h page-d)
+  (trace-succeeded:tracer p.dry-run)
 ::
 ++  parity-transition-full
   |=  [prev-proof=* prev-height=@ud old-acc=nns-accumulator:na pag=nns-page-summary:np claims=(list nns-claim:np)]
@@ -59,11 +60,12 @@
         0
         digest.pag
     ==
+  ?.  (transition-spec:rb prev-proof 0 0 prev-height old-acc pag claims 0 +(prev-height) digest.pag)
+    %.n
   =/  dry-run
     %-  mule  |.  .*(subject.samp formula.samp)
   ?.  ?=(%& -.dry-run)  %.n
-  ?.  ?=(%.y p.dry-run)  %.n
-  (transition-spec:rb prev-proof 0 0 prev-height old-acc pag claims 0 +(prev-height) digest.pag)
+  (trace-succeeded:tracer p.dry-run)
 ::
 ++  peek-tracer-parity
   |=  $:  =path
