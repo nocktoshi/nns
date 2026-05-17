@@ -11,7 +11,7 @@
    Path Y verifies `claim.owner` against **`TransactionInput.signer_pubkey_b58`** (Schnorr pubkey base58 from each v1 spend’s witness / legacy signature map), not against the spent note’s `note_name_b58`. If this field is missing on all inputs, the follower falls back to the legacy `note_name_b58 == owner` rule only when every `signer_pubkey_b58` list is empty (pre-upgrade nodes).
 
 3. **A way to put that NoteData on-chain**  
-   Wallets must be able to attach the keyed blobs NNS defines (`docs/claim-note-wallet-support.md`). Upstream direction: **[nockchain#85](https://github.com/nockchain/nockchain/pull/85)** (`create-tx --memo-data` — API still evolving in review).
+   Wallets must be able to attach the keyed blobs NNS defines (`docs/claim-note-wallet-support.md`). Upstream MR: **[nockchain#116](https://github.com/nockchain/nockchain/pull/116)** (`create-tx --memo-data` — API still evolving in review).
 
 ## Hoon / `hoonc`
 
