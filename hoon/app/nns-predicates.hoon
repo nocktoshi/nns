@@ -454,7 +454,7 @@
 ::  Bundle-only checks (all cryptographically bound via the STARK's
 ::  bundle-digest commitment). Path Y removed `%prove-claim`; any
 ::  former prove-only witness checks must live here so `%validate-claim`
-::  and `%scan-block`'s `+valid-claim-candidate` stay aligned.
+::  and `%scan-block`'s `+valid-claim` stay aligned.
 ::
 ::  Predicates NOT yet enforced (Level C-B, future):
 ::    - `compute-id:raw-tx:t` inside the kernel (would eliminate the
@@ -764,15 +764,15 @@
 ::  The Path Y recursive-rollup (see `/.cursor/plans/stateless_nns_tx_primitive_3db35132.plan.md`)
 ::  replaces per-claim `%claim` / `%prove-claim` submission with a
 ::  block-by-block scan: the follower fetches every block, filters
-::  for `nns/v1/claim` transactions, extracts their claim candidates,
+::  for `nns/v1/claim` transactions, extracts their claim claims,
 ::  and pokes a single `%scan-block`. The kernel then folds those
-::  candidates over the accumulator, enforcing Level A/B/C-A
+::  claims over the accumulator, enforcing Level A/B/C-A
 ::  predicates and first-writer-wins semantics.
 ::
-::  +$nns-claim-candidate: what a Rust follower ships to the kernel
+::  +$nns-claim: what a Rust follower ships to the kernel
 ::  for each transaction it believes is an `nns/v1/claim` in the
 ::  current page. The follower's extraction is not trusted — every
-::  field is re-checked by `+valid-claim-candidate` before anything
+::  field is re-checked by `+valid-claim` before anything
 ::  enters the accumulator.
 ::
 ::  Fields:
@@ -784,7 +784,7 @@
 ::        kernel's `%prove-claim` path consumes). Enables treasury /
 ::        sender / amount checks without a full tx-engine cone.
 ::
-+$  nns-claim-candidate
++$  nns-claim
   $:  name=@t
       owner=@t
       fee=@ud
@@ -792,8 +792,8 @@
       witness=nns-raw-tx-witness
   ==
 ::
-::  +valid-claim-candidate: predicate bundle the scanner applies to
-::  every incoming candidate. Returns %.y iff *all* of the following
+::  +valid-claim: predicate bundle the scanner applies to
+::  every incoming claim. Returns %.y iff *all* of the following
 ::  hold:
 ::
 ::    G1   — `is-valid-name name`                  (format)
@@ -805,14 +805,14 @@
 ::    C-A4 — `matches-treasury witness`            (canonical lock root)
 ::
 ::  Not checked here:
-::    - Chain linkage. The scanner operates PER BLOCK — candidates
+::    - Chain linkage. The scanner operates PER BLOCK — claims
 ::      are already tied to a specific `page` whose digest is an
 ::      input to the recursive step. The recursive-step STARK
 ::      (Y3 `y3-recursive-step`) asserts `page.parent == prev_digest`
 ::      from the kernel state, which replaces `chain-links-to`.
 ::    - Name uniqueness / exclusivity. That's the accumulator's job —
 ::      `+insert:nns-accumulator` is first-writer-wins. We intentionally
-::      do NOT reject a candidate whose name is already present; the
+::      do NOT reject a claim whose name is already present; the
 ::      scanner silently drops it. This matches the Path Y semantics:
 ::      later duplicate claims are valid transactions that just don't
 ::      bind the name.
@@ -820,10 +820,10 @@
 ::  Ordering: cheap-to-expensive (format → fee → inclusion →
 ::  witness atom-equalities → witness amount compare). Short-circuits
 ::  on first failure. No error tags emitted at this layer — Rust-side
-::  observability can surface dropped candidates via follower logs.
+::  observability can surface dropped claims via follower logs.
 ::
-++  valid-claim-candidate
-  |=  [pag=nns-page-summary c=nns-claim-candidate]
+++  valid-claim
+  |=  [pag=nns-page-summary c=nns-claim]
   ^-  ?
   ?&  (is-valid-name name.c)
       (gte fee.c (fee-for-name name.c))
@@ -834,7 +834,7 @@
       (matches-treasury witness.c)
   ==
 ::
-::  +claim-scanner: fold every valid candidate into the accumulator,
+::  +claim-scanner: fold every valid claim into the accumulator,
 ::  first-writer-wins, returning the new accumulator.
 ::
 ::  Inputs:
@@ -846,7 +846,7 @@
 ::        `tx-ids` (consulted by `has-tx-in-page`).
 ::    height
 ::        the block's height; stored in each new entry's `claim-height`.
-::    candidates
+::    claims
 ::        Rust-provided list of parsed `nns/v1/claim` transactions
 ::        from this block. Order must match `~(tap z-in tx-ids)` on the
 ::        block's canonical `(z-set @ux)` — Tip5 / gor-tip visit order
@@ -854,7 +854,7 @@
 ::        first-writer-wins, duplicate-name races resolve by that scan
 ::        order (the follower sorts RPC-derived lists to match).
 ::
-::  Complexity: O(k log n) where k = |candidates|, n = |old-acc|.
+::  Complexity: O(k log n) where k = |claims|, n = |old-acc|.
 ::  The recursive-step STARK (Y3) will trace this arm directly —
 ::  the loop body is pure Hoon, no Nock-9 on anything but the
 ::  predicate gate itself. Once Vesl ships opcode 9/10/11 support,
@@ -873,14 +873,14 @@
   |=  $:  old-acc=nns-accumulator:na
           pag=nns-page-summary
           height=@ud
-          candidates=(list nns-claim-candidate)
+          claims=(list nns-claim)
       ==
   ^-  nns-accumulator:na
   =/  acc  old-acc
   |-  ^-  nns-accumulator:na
-  ?~  candidates  acc
-  =/  c=nns-claim-candidate  i.candidates
-  =?  acc  (valid-claim-candidate pag c)
+  ?~  claims  acc
+  =/  c=nns-claim  i.claims
+  =?  acc  (valid-claim pag c)
     =/  entry=nns-accumulator-entry:na
       :*  name=name.c
           owner=owner.c
@@ -889,5 +889,5 @@
           block-digest=digest.pag
       ==
     (insert:na acc name.c entry)
-  $(candidates t.candidates)
+  $(claims t.claims)
 --

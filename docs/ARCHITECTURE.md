@@ -177,7 +177,7 @@ Instead:
 1. User sends a payment / claim note to Nockchain.
 2. Nockchain orders that note in a block.
 3. Every NNS follower observes the same ordered note stream.
-4. Every NNS kernel folds the same candidates via **`%scan-block`** in the same order.
+4. Every NNS kernel folds the same claims via **`%scan-block`** in the same order.
 5. Conflicts resolve deterministically by C3.
 Flow:
 ```mermaid
@@ -188,7 +188,7 @@ sequenceDiagram
     participant Kernel as NNS kernel
     Client->>Chain: nns/v1/claim note (0.nock -> Alice)
     Chain-->>Hull: block commitment + txs (follower)
-    Hull->>Kernel: %scan-block (candidates from block)
+    Hull->>Kernel: %scan-block (claims from block)
     Kernel-->>Hull: effects / predicate rejection
 ```
 ## 2.3 Resulting system
@@ -436,7 +436,7 @@ deterministic first-writer-wins scan:
 ```text
 acc_0 = empty
 for each canonical block in height order:
-  for each NNS claim candidate in deterministic tx order:
+  for each NNS claim claim in deterministic tx order:
     if name ∉ acc:
       acc[name] = (owner, tx_hash, height, block_digest)
     else:

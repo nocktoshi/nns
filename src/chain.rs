@@ -409,9 +409,9 @@ pub fn align_scan_block_fetch_tx_order(
 
 /// Stable scan order for [`crate::kernel::ClaimCandidate`] rows: sort by z-set position of
 /// `witness.tx_id` in the block's tx-id multiset (matches `+claim-scanner` fold order).
-pub fn sort_claim_candidates_by_z_set_tx_order(
+pub fn sort_claims_by_z_set_tx_order(
     page_tx_ids: &[Vec<u8>],
-    mut candidates: Vec<ClaimCandidate>,
+    mut claims: Vec<ClaimCandidate>,
 ) -> Result<Vec<ClaimCandidate>, String> {
     let canonical = canonical_z_set_tx_order(page_tx_ids.to_vec())?;
     let rank: HashMap<Vec<u8>, usize> = canonical
@@ -419,13 +419,13 @@ pub fn sort_claim_candidates_by_z_set_tx_order(
         .enumerate()
         .map(|(i, k)| (k, i))
         .collect();
-    candidates.sort_by_key(|c| {
+    claims.sort_by_key(|c| {
         rank
             .get(&c.witness.tx_id)
             .copied()
             .unwrap_or(usize::MAX)
     });
-    Ok(candidates)
+    Ok(claims)
 }
 
 /// Connect a `NockchainBlockServiceClient` against `endpoint`.
@@ -917,7 +917,7 @@ mod z_set_order_tests {
     }
 
     #[test]
-    fn sort_claim_candidates_follows_z_set_rank() {
+    fn sort_claims_follows_z_set_rank() {
         let a = atom_from_limbs([1, 0, 0, 0, 0]);
         let b = atom_from_limbs([4, 0, 0, 0, 0]);
         let page = vec![b.clone(), a.clone()];
@@ -949,7 +949,7 @@ mod z_set_order_tests {
             },
         };
         // Deliberately reverse of desired scan order
-        let sorted = sort_claim_candidates_by_z_set_tx_order(&page, vec![c_b, c_a]).unwrap();
+        let sorted = sort_claims_by_z_set_tx_order(&page, vec![c_b, c_a]).unwrap();
         assert_eq!(sorted[0].witness.tx_id, canon[0]);
         assert_eq!(sorted[1].witness.tx_id, canon[1]);
     }

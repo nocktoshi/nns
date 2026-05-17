@@ -8,7 +8,7 @@
 //! Representative **`$cause`** tags this crate builds or inspects:
 //!
 //!   - **`%scan-block`** — follower ingests one chain block’s claim
-//!     candidates into the accumulator.
+//!     claims into the accumulator.
 //!   - **`%prove-arbitrary`**, **`%prove-claim-in-stark`**,
 //!     **`%prove-recursive-step`**, **`%prove-identity`** — STARK
 //!     prover exercises (`prove-computation:vp`); effects include
@@ -522,9 +522,9 @@ pub struct ClaimWitness {
     pub output_lock_root: String,
 }
 
-/// One `nns/v1/claim` candidate extracted from a Nockchain block.
+/// One `nns/v1/claim` claim extracted from a Nockchain block.
 ///
-/// This mirrors `+$nns-claim-candidate` in `hoon/lib/nns-predicates.hoon`
+/// This mirrors `+$nns-claim` in `hoon/lib/nns-predicates.hoon`
 /// and is the per-transaction payload folded by `%scan-block`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaimCandidate {
@@ -569,18 +569,18 @@ impl ClaimBundle {
     }
 }
 
-/// Build a `[%scan-block parent height page-digest page-tx-ids candidates]`
+/// Build a `[%scan-block parent height page-digest page-tx-ids claims]`
 /// poke slab.
 ///
 /// This is the Path Y non-recursive precursor: the follower supplies one
 /// canonical block, the kernel checks parent/height monotonicity, then folds
-/// valid candidates into the accumulator.
+/// valid claims into the accumulator.
 pub fn build_scan_block_poke(
     parent: &[u8],
     height: u64,
     page_digest: &[u8],
     page_tx_ids: &[Vec<u8>],
-    candidates: &[ClaimCandidate],
+    claims: &[ClaimCandidate],
 ) -> NounSlab {
     let mut slab = NounSlab::new();
     let tag = make_tag_in(&mut slab, "scan-block");
@@ -594,8 +594,8 @@ pub fn build_scan_block_poke(
         tx_ids_list = T(&mut slab, &[tx_id, tx_ids_list]);
     }
 
-    let mut candidates_list = D(0);
-    for c in candidates.iter().rev() {
+    let mut claims_list = D(0);
+    for c in claims.iter().rev() {
         let name = make_cord_in(&mut slab, &c.name);
         let owner = make_cord_in(&mut slab, &c.owner);
         let fee = atom_from_u64(&mut slab, c.fee);
@@ -605,8 +605,8 @@ pub fn build_scan_block_poke(
         let w_amount = atom_from_u64(&mut slab, c.witness.treasury_amount);
         let w_treasury = make_cord_in(&mut slab, &c.witness.output_lock_root);
         let witness = T(&mut slab, &[w_tx_id, w_spender, w_amount, w_treasury]);
-        let candidate = T(&mut slab, &[name, owner, fee, tx_hash, witness]);
-        candidates_list = T(&mut slab, &[candidate, candidates_list]);
+        let claim = T(&mut slab, &[name, owner, fee, tx_hash, witness]);
+        claims_list = T(&mut slab, &[claim, claims_list]);
     }
 
     let poke = T(
@@ -617,7 +617,7 @@ pub fn build_scan_block_poke(
             height_atom,
             page_digest_atom,
             tx_ids_list,
-            candidates_list,
+            claims_list,
         ],
     );
     slab.set_root(poke);
@@ -1047,11 +1047,11 @@ pub fn build_prove_recursive_genesis_poke() -> NounSlab {
 ///
 /// Noun cell order matches the Hoon cause mold:
 /// `[%prove-recursive-transition prev-proof-jam=@ prev-subject-jam=@
-///  prev-formula-jam=@ page-digest=@ux page-tx-ids=* candidates=* block-proof=*]`
+///  prev-formula-jam=@ page-digest=@ux page-tx-ids=* claims=* block-proof=*]`
 ///
 /// The kernel passes those JAMs (after `cue`) into `build-recursive-transition-inputs`
 /// as `prev-proof`, `prev-subj`, `prev-form`, together with `accumulator.state`,
-/// `pag`, `cands`, `block-proof`, `last-proved-height`, and `+(last-proved-height)` /
+/// `pag`, `claims`, `block-proof`, `last-proved-height`, and `+(last-proved-height)` /
 /// `page-digest` as want-height / want-digest.
 ///
 /// When all three `prev-*-jam` atoms are empty, the handler reads the prior triple
@@ -1062,7 +1062,7 @@ pub fn build_prove_recursive_transition_poke(
     prev_formula_jam: &[u8],
     page_digest: &[u8],
     page_tx_ids: &[Vec<u8>],
-    candidates: &[ClaimCandidate],
+    claims: &[ClaimCandidate],
     block_proof: &[u8], // jammed sp proof for now
 ) -> NounSlab {
     let mut slab = NounSlab::new();
@@ -1080,9 +1080,9 @@ pub fn build_prove_recursive_transition_poke(
         tx_ids_list = T(&mut slab, &[tx_id, tx_ids_list]);
     }
 
-    // candidates list (reuse the same encoding as scan-block)
-    let mut cands_list = D(0);
-    for c in candidates.iter().rev() {
+    // claims list (reuse the same encoding as scan-block)
+    let mut claims_list = D(0);
+    for c in claims.iter().rev() {
         assert_eq!(
             c.tx_hash.len(),
             40,
@@ -1091,7 +1091,7 @@ pub fn build_prove_recursive_transition_poke(
         assert_eq!(
             c.witness.tx_id.len(),
             40,
-            "witness tx-id must be 40 bytes for kernel nns-claim-candidate shape"
+            "witness tx-id must be 40 bytes for kernel nns-claim shape"
         );
         let name = make_cord_in(&mut slab, &c.name);
         let owner = make_cord_in(&mut slab, &c.owner);
@@ -1102,14 +1102,14 @@ pub fn build_prove_recursive_transition_poke(
         let w_amount = atom_from_u64(&mut slab, c.witness.treasury_amount);
         let w_treasury = make_cord_in(&mut slab, &c.witness.output_lock_root);
         let witness = T(&mut slab, &[w_tx_id, w_spender, w_amount, w_treasury]);
-        let candidate = T(&mut slab, &[name, owner, fee, tx_hash, witness]);
-        cands_list = T(&mut slab, &[candidate, cands_list]);
+        let claim = T(&mut slab, &[name, owner, fee, tx_hash, witness]);
+        claims_list = T(&mut slab, &[claim, claims_list]);
     }
 
     let poke = T(
         &mut slab,
         &[
-            tag, p_proof, p_subj, p_form, pg_digest, tx_ids_list, cands_list, block_p,
+            tag, p_proof, p_subj, p_form, pg_digest, tx_ids_list, claims_list, block_p,
         ],
     );
     slab.set_root(poke);
@@ -1263,10 +1263,16 @@ pub fn build_y3_parity_genesis_peek() -> NounSlab {
     single_tag_peek("y3-parity-genesis")
 }
 
-/// `/y3-parity-transition-empty ~` — empty-candidate transition trace vs
+/// `/y3-parity-transition-empty ~` — empty-claim transition trace vs
 /// `++transition-spec` on a canned 4-tuple subject.
 pub fn build_y3_parity_transition_empty_peek() -> NounSlab {
     single_tag_peek("y3-parity-transition-empty")
+}
+
+/// `/y3-parity-transition-full ~` — one-claim full transition trace vs
+/// `++transition-spec` on the slim 8-tuple subject (no embedded prev-proof JAM).
+pub fn build_y3_parity_transition_full_peek() -> NounSlab {
+    single_tag_peek("y3-parity-transition-full")
 }
 
 /// Decode a Y3 parity peek (`%.y` / `%.n` as 0/1 atom).
@@ -1987,7 +1993,7 @@ pub fn first_prove_failed(effects: &[NounSlab]) -> Option<Vec<u8>> {
 ///   - `[%prover-mule-failed <error>]`         — prove-computation mule failed
 ///   - `[%stark-prove-failed <error>]`         — the STARK prover returned failure
 ///
-/// This helps us instantly see whether the simple based candidate list
+/// This helps us instantly see whether the simple based claim list
 /// is dying in normal Nock evaluation or inside the STARK prover.
 pub fn decode_prove_failure(jam: &[u8]) -> String {
     if jam.is_empty() {

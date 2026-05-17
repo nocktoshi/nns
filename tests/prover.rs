@@ -18,7 +18,7 @@ use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use nns_vesl::chain::{ScanBlockFetch, NNS_GENESIS_HEIGHT as H0};
 use nns_vesl::chain_follower::{
-    apply_prefetched_scan_blocks, apply_prefetched_scan_blocks_with_candidates,
+    apply_prefetched_scan_blocks, apply_prefetched_scan_blocks_with_claims,
 };
 use nns_vesl::formula_nock::formula_contains_banned_nock_opcodes;
 use nns_vesl::kernel::{
@@ -27,6 +27,7 @@ use nns_vesl::kernel::{
     build_prove_recursive_transition_poke,
     build_recursive_proof_peek, build_verify_stark_poke, decode_recursive_proof,
     build_y3_parity_genesis_peek, build_y3_parity_transition_empty_peek,
+    build_y3_parity_transition_full_peek,
     decode_y3_parity_bool,
     first_genesis_recursive_dry_run_ok, first_recursive_transition_dry_run_ok,
     first_recursive_transition_proof, decode_prove_failure,
@@ -82,7 +83,16 @@ async fn y3_trace_formula_spec_parity_peeks() {
         .expect("y3-parity-transition-empty peek");
     assert!(
         decode_y3_parity_bool(&empty).expect("decode empty-transition parity"),
-        "empty-cands transition trace .* must match ++transition-spec on canned subject"
+        "empty-claims transition trace .* must match ++transition-spec on canned subject"
+    );
+
+    let full = app
+        .peek(build_y3_parity_transition_full_peek())
+        .await
+        .expect("y3-parity-transition-full peek");
+    assert!(
+        decode_y3_parity_bool(&full).expect("decode full-transition parity"),
+        "one-cand transition trace .* must match ++transition-spec on slim subject"
     );
 }
 
@@ -179,7 +189,7 @@ fn scan_block_stub(
     }
 }
 
-fn synthetic_claim_candidate(
+fn synthetic_claim(
     name: &str,
     owner: &str,
     tx_atom_byte: u8,
@@ -213,7 +223,7 @@ async fn peek_last_proved_digest(state: &nns_vesl::state::SharedState) -> Vec<u8
 }
 
 /// Path Y: inject a successful claim into the kernel [`nns_vesl::chain_follower`]-style
-/// (`%scan-block` + synthetic candidates), matching production registration. Legacy
+/// (`%scan-block` + synthetic claims), matching production registration. Legacy
 /// `POST /register` + `POST /claim` are removed — the HTTP API is read-only.
 async fn register_name_via_scan(state: &nns_vesl::state::SharedState, addr: &str, name: &str) {
     let treasury = fee_for_name(name);
@@ -231,8 +241,8 @@ async fn register_name_via_scan(state: &nns_vesl::state::SharedState, addr: &str
     parent = peek_last_proved_digest(state).await;
 
     let b2 = scan_block_stub(H0 + 1, parent, d2, vec![vec![tx_byte]]);
-    let candidates = vec![synthetic_claim_candidate(name, addr, tx_byte, treasury)];
-    apply_prefetched_scan_blocks_with_candidates(state, vec![b2], vec![candidates])
+    let claims = vec![synthetic_claim(name, addr, tx_byte, treasury)];
+    apply_prefetched_scan_blocks_with_claims(state, vec![b2], vec![claims])
         .await
         .expect("apply scan block 2")
         .expect("scan outcome block 2");
@@ -494,7 +504,7 @@ async fn phase3c_step3_prove_arbitrary_roundtrip() {
     let (_tmp, state) = boot_nns_with_prover().await;
 
     // Build noun `42` and jam it.
-    let mut sub_stack = new_stack();
+    let sub_stack = new_stack();
     let subject_noun = D(42);
     let subject_jam = jam_to_bytes(subject_noun, &sub_stack.noun_space());
 
@@ -793,7 +803,7 @@ async fn y3_transition_proof_verifiable_by_light_verify_path() {
         &prev_form,
         &[1u8; 40],           // page-digest
         &vec![],              // page-tx-ids
-        &vec![],              // candidates (empty for this test)
+        &vec![],              // claims (empty for this test)
         &vec![],              // block-proof (stub)
     );
 
@@ -889,10 +899,10 @@ async fn y3_strict_transition_proof_effect() {
         "genesis trace formula .* must succeed (dry-run-ok)"
     );
     println!("Genesis proof formula checked");
-    // Trivial transition with one minimal candidate.
+    // Trivial transition with one minimal claim.
     // We still re-emit the genesis proof (no prover call) but now
-    // exercise a non-empty candidate list in the poke.
-    let claim_candidate = ClaimCandidate {
+    // exercise a non-empty claim list in the poke.
+    let claim = ClaimCandidate {
         name: "nockchain.nock".to_string(),
         owner: "o".to_string(),
         fee: 0,
@@ -911,10 +921,10 @@ async fn y3_strict_transition_proof_effect() {
         &genesis_form,
         &[1u8; 40],
         &vec![],
-        &vec![claim_candidate],   // non-empty candidates → real path
+        &vec![claim],   // non-empty claims → real path
         &vec![],
     );
-    println!("First transition poke (non-empty acc, non-empty cands) built");
+    println!("First transition poke (non-empty acc, non-empty claims) built");
     let efx = {
         let mut k = state.kernel.lock().await;
         k.poke(SystemWire.to_wire(), transition_poke)
@@ -941,7 +951,7 @@ async fn y3_strict_transition_proof_effect() {
         }
         println!("==================================================================\n");
         panic!(
-            "Expected a successful %recursive-transition-proof effect with our simple based candidate. \
+            "Expected a successful %recursive-transition-proof effect with our simple based claim. \
              See the decoded failure above."
         );
     }
@@ -981,7 +991,7 @@ async fn y3_strict_transition_proof_effect() {
 #[ignore]
 #[tokio::test]
 async fn y3_follower_attempts_recursive_transition_after_scan_block() {
-    use nns_vesl::chain_follower::apply_prefetched_scan_blocks_with_candidates;
+    use nns_vesl::chain_follower::apply_prefetched_scan_blocks_with_claims;
     use nns_vesl::chain::ScanBlockFetch;
 
     let (_tmp, state) = boot_nns_with_prover().await;
@@ -995,7 +1005,7 @@ async fn y3_follower_attempts_recursive_transition_after_scan_block() {
             .expect("genesis prove");
     }
 
-    // 2. Prepare a minimal synthetic block + candidates for the scan
+    // 2. Prepare a minimal synthetic block + claims for the scan
     let block = ScanBlockFetch {
         height: nns_vesl::chain::NNS_GENESIS_HEIGHT,
         parent: vec![0u8; 40],
@@ -1004,16 +1014,16 @@ async fn y3_follower_attempts_recursive_transition_after_scan_block() {
         tx_details: vec![],
     };
 
-    // Empty candidates list for this block (the scanner will just see no claims)
-    let candidates_for_block: Vec<ClaimCandidate> = vec![];
+    // Empty claims list for this block (the scanner will just see no claims)
+    let claims_for_block: Vec<ClaimCandidate> = vec![];
 
     // 3. Run the normal follower scan path (this is where the Y3 transition
     //    hook lives — after a successful %scan-block-done it will try the
     //    %prove-recursive-transition poke).
-    let outcome = apply_prefetched_scan_blocks_with_candidates(
+    let outcome = apply_prefetched_scan_blocks_with_claims(
         &state,
         vec![block],
-        vec![candidates_for_block],
+        vec![claims_for_block],
     )
     .await;
 

@@ -156,7 +156,7 @@ Goal: answer "is recursive STARK composition feasible in current Vesl?" before w
 Goal: ship pure-Hoon data structures and predicates that are prover-trace-ready when Y0 unblocks. Works without the prover in unit tests.
 
 - [`hoon/lib/nns-accumulator.hoon`](hoon/lib/nns-accumulator.hoon): `+$ nns-accumulator`, z-set `(map name [owner tx-hash claim-height block-digest])` with arms `insert`, `has`, `get`, `root`. Inclusion proofs via `has:z-in` walk (cheap, §8.7 in ARCHITECTURE).
-- [`hoon/lib/nns-predicates.hoon`](hoon/lib/nns-predicates.hoon): add `+claim-scanner` that folds over claim candidates extracted from a page, inserts each valid `nns/v1/claim` whose name is not yet in the accumulator. Reuses existing Level C-A/B predicates (`pays-sender`, `pays-amount`, `matches-treasury`, `fee-for-name`, `is-valid-name`) and membership/commitment checks. It must not re-run Nockchain tx execution.
+- [`hoon/lib/nns-predicates.hoon`](hoon/lib/nns-predicates.hoon): add `+claim-scanner` that folds over claim claims extracted from a page, inserts each valid `nns/v1/claim` whose name is not yet in the accumulator. Reuses existing Level C-A/B predicates (`pays-sender`, `pays-amount`, `matches-treasury`, `fee-for-name`, `is-valid-name`) and membership/commitment checks. It must not re-run Nockchain tx execution.
 - [`hoon/lib/tx-witness.hoon`](hoon/lib/tx-witness.hoon): narrow commitment helper library (block-commitment, tx-id set membership, optional raw-tx -> tx-id hashing if needed). Do not vendor `spends` / `outputs`; those belong to Nockchain transaction execution.
 - Tests: claim-scanner on handcrafted pages; duplicate-name handling; invalid-tx skipping; accumulator monotonic growth.
 

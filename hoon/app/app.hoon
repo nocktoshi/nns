@@ -47,9 +47,9 @@
       parent=@ux    :: Tip5 hash of parent header (anchor-tip of genesis is 0)
   ==
 ::
-+$  transition-candidate
++$  transition-claim
   $:  key=nns-name-key:na
-      cand=nns-claim-candidate:np
+      cand=nns-claim:np
   ==
 ::
 ::  +$anchored-chain: kernel's view of the Nockchain header chain,
@@ -105,7 +105,7 @@
           prev-formula-jam=@
           page-digest=@ux
           page-tx-ids=(list @ux)
-          candidates=(list nns-claim-candidate:np)
+          claims=(list nns-claim:np)
           block-proof=*
       ==
       ::
@@ -145,11 +145,11 @@
       ::
       [%prove-identity ~]
       ::  Path Y2: ingest one Nockchain block worth of nns/v1/claim
-      ::  candidates. Verifies parent links to last-proved-digest,
+      ::  claims. Verifies parent links to last-proved-digest,
       ::  height is the successor of last-proved-height, except on
       ::  genesis boot where it must be at least nns-genesis-height
       ::   NNS shipped long after Nockchain genesis; blocks below that have
-      ::  no claim notes . Then folds valid candidates into the accumulator via
+      ::  no claim notes . Then folds valid claims into the accumulator via
       ::  claim-scanner:np. On success advances the scan cursor to
       ::  this block’s digest and emits [ pct scan-block-done ...].
       ::
@@ -158,7 +158,7 @@
           height=@ud
           page-digest=@ux
           page-tx-ids=(list @ux)
-          candidates=(list nns-claim-candidate:np)
+          claims=(list nns-claim:np)
       ==
       ::  Phase 3 Level A: exercise chain-links-to:nns-predicates
       ::  without going through  pct claim. Read-only — the cause does not
@@ -277,153 +277,72 @@
     acc
   (insert:na acc nns-genesis-tld-name genesis-tld-entry)
 ::
-::  --- Y3 trace formula combinators (Nock opcodes 0–8) ---
+::  --- Y3 trace formulas (Nock opcodes 0–8 only) ---
 ::
-::  Vesl's prover traces these trees verbatim (fink supports 0–8; still no
-::  `%9`–`%11`).  Host-side spec gates (++genesis-recursive-formula,
-::  ++transition-spec) use full Hoon; builders here only emit `%0`–`%8`.
+::  Compile-time Hoon builds formula *nouns* for the prover (no `%9`–`%11`).
+::  Spec gates (++genesis-recursive-formula, ++transition-spec) stay full Hoon.
 ::
-::  Subject layout reference:
-::    genesis:            [acc [height digest]]           axes 2 3 6
-::    transition-empty:   [prev-h page-d want-h page-d]   axes 3 4 5 6
-::    transition-full:    8-tuple (see ++build-recursive-transition-inputs)
-::      packed-prev prev-h acc-list pag keyed-cands block-proof want-h want-d
-::      axes 2–9; digest.pag at [0 10]; cand key at [0 6 2] when non-empty
+::  Subject axes (`:*` tuples — slot n at 2^(n+1)-2):
+::    genesis:  [acc [height digest]]                         → 2, 3, 6
+::    empty:    [prev-h page-d want-h page-d]                 → 2, 6, 14, 30
+::    full:     proof-len prev-h digest acc-tag cand-tag block want-h want-d
+::              → 2, 6, 14, 30, 62, 126, 254, 510 (tags = first limb of name-key)
 ::
-++  y-pick
+++  trace-pick
   |=  axis=@
-  ^-  *
   [0 axis]
 ::
-++  y-lit
+++  trace-lit
   |=  x=@
-  ^-  *
   [1 x]
 ::
-++  y-eq
+++  trace-eq
   |=  [a=* b=*]
-  ^-  *
   [5 a b]
 ::
-++  y-incr
-  |=  axis=@
-  ^-  *
-  [4 (y-pick axis)]
-::
-::  Nock 7: *[*[subj a] b] — pipe; first formula's product is the next subject.
-::
-++  y-compose
-  |=  [first=* rest=*]
-  ^-  *
-  [7 first rest]
-::
-::  Nock 8: *[[*[subj head] subj] body] — pin head at /2, old subject at /3.
-::  Old axis n (n≥2) becomes pick axis (add 4 n) in body.
-::
-++  y-extend
-  |=  [head=* body=*]
-  ^-  *
-  [8 head body]
-::
-++  y-pick-extended
-  |=  old-axis=@
-  ^-  *
-  (y-pick (add 4 old-axis))
-::
-::  want-axis on the original subject == +(height-axis), via extend + pick /2.
-::
-++  y-eq-at-incr
-  |=  [height-axis=@ want-axis=@]
-  ^-  *
-  %+  y-extend
-    (y-incr height-axis)
-  (y-eq (y-pick-extended want-axis) (y-pick 2))
-::
-++  y-and
+++  trace-and
   |=  [p=* q=*]
-  ^-  *
   [6 p [6 q [1 0] [1 1]] [1 1]]
 ::
-++  y-ok
-  ^-  *
-  [1 0]
-::
-++  y-fail
-  ^-  *
-  [1 1]
-::
-++  y-eq-at-lit
-  |=  [axis=@ lit=@]
-  ^-  *
-  (y-eq (y-pick axis) (y-lit lit))
-::
-++  y-eq-at-axis
-  |=  [a=@ b=@]
-  ^-  *
-  (y-eq (y-pick a) (y-pick b))
-::
-++  y-nonzero-at
+++  trace-nonzero
   |=  axis=@
-  ^-  *
-  [6 (y-eq (y-pick axis) (y-lit 0)) [1 1] [1 0]]
+  [6 (trace-eq (trace-pick axis) (trace-lit 0)) [1 1] [1 0]]
 ::
-::  transition-empty subject [prev-h page-d want-h page-d]
+::  Nock 8: pin +(pick height-axis) at /2, then assert pick want-axis equals /2.
 ::
-++  y-height-digest-empty
-  |=  [want-h=@ page-d=@ux]
-  ^-  *
-  =/  wh-eq  (y-eq-at-incr 2 5)
-  =/  wd-eq  (y-eq (y-pick 5) (y-lit page-d))
-  %+  y-and
-    wh-eq
-  %+  y-and
-    (y-eq (y-pick 3) (y-lit want-h))
-  wd-eq
+++  trace-eq-want-incr
+  |=  [height-axis=@ want-axis=@]
+  [8 [4 (trace-pick height-axis)] (trace-eq (trace-pick (add 4 want-axis)) [0 2])]
 ::
-::  transition-full: proof atom at axis 4, prev-height at 3.
-::
-++  y-prev-proof-stub-ok
-  ^-  *
-  %+  y-and
-    (y-nonzero-at 4)
-  (y-nonzero-at 3)
-::
-::  want-height at axis 8 == +(prev-height at 3); digest.pag at 10 == want-d at 9.
-::  Height monotonicity uses Nock 8 so +(prev-h) is pinned at /2 for the eq.
-::
-++  y-transition-monotonicity-full
-  ^-  *
-  =/  wh-eq  (y-eq-at-incr 3 8)
-  =/  wd-eq  (y-eq (y-pick 9) (y-pick 10))
-  (y-and wh-eq wd-eq)
-::
-::  Keyed-cands at axis 62 (5th slot of 8-tuple).  acc-list at axis 14.
-::  If no candidates, ok.  If one candidate, acc must be empty (~) or
-::  head key (axis 30) must differ from cand key (axis 126).
-::
-++  y-first-writer-wins-one-cand
-  ^-  *
-  [6 (y-eq-at-lit 62 0) [1 0] [6 (y-eq-at-axis 30 126) [1 1] [1 0]]]
-::
-++  y-transition-full-trace-formula
-  ^-  *
-  %+  y-and
-    y-prev-proof-stub-ok
-  %+  y-and
-    y-transition-monotonicity-full
-  y-first-writer-wins-one-cand
-::
-++  y-genesis-trace-formula
+++  genesis-trace-formula
   |=  genesis-height=@
   ^-  *
-  =/  f-height  (y-eq-at-lit 3 genesis-height)
-  =/  f-digest  (y-eq-at-lit 6 0)
-  =/  f-acc-nonempty  (y-nonzero-at 2)
-  %+  y-and
-    f-acc-nonempty
-  %+  y-and
-    f-height
-  f-digest
+  %+  trace-and
+    (trace-nonzero 2)
+  %+  trace-and
+    (trace-eq (trace-pick 3) (trace-lit genesis-height))
+  (trace-eq (trace-pick 6) (trace-lit 0))
+::
+++  transition-trace-formula-empty
+  |=  [want-h=@ page-d=@ux]
+  ^-  *
+  %+  trace-and
+    (trace-eq-want-incr 2 14)
+  (trace-eq (trace-pick 6) (trace-pick 30))
+::
+++  transition-trace-formula-full
+  |=  [prev-h=@ want-h=@]
+  ^-  *
+  %+  trace-and
+    %+  trace-and
+      (trace-nonzero 2)
+    (trace-eq (trace-pick 6) (trace-lit prev-h))
+  %+  trace-and
+    %+  trace-and
+      (trace-eq (trace-pick 254) (trace-lit want-h))
+    (trace-eq (trace-pick 510) (trace-pick 14))
+  ::  FWW: no cand tag (62 = 0), or acc tag (30) differs from cand tag (62).
+  [6 (trace-eq (trace-pick 62) (trace-lit 0)) [1 0] [6 (trace-eq (trace-pick 30) (trace-pick 62)) [1 1] [1 0]]]
 ::
 ::  The base-case recursive proof attests:
 ::    - accumulator contains the genesis TLD row (`nock`)
@@ -433,7 +352,7 @@
 ::  The traced formula must avoid Nock 9–11: prove-computation:vp / fink
 ::  still traps on 9 even though the host .* dry-run succeeds.  We use an
 ::  explicit 0–8 tree that matches ++genesis-recursive-formula on subjects
-::  shaped [acc [height digest]].
+::  shaped [acc [height digest]] (axes 2 3 6).
 ::
 
 ++  genesis-recursive-formula
@@ -448,30 +367,43 @@
   |=  [acc=nns-accumulator:na height=@ud digest=@ux]
   ^-  [subject=* formula=*]
   =/  sub=*  [acc [height digest]]
-  =/  form=*  (y-genesis-trace-formula nns-genesis-height)
+  =/  form=*  (genesis-trace-formula nns-genesis-height)
   [sub form]
 ::
 ++  build-transition-trace-formula-empty
   |=  [want-h=@ page-d=@ux]
   ^-  *
-  (y-height-digest-empty want-h page-d)
+  (transition-trace-formula-empty want-h page-d)
 ::
-++  build-transition-trace-formula-full
-  y-transition-full-trace-formula
-::
-++  prekey-candidates
-  |=  cands=(list nns-claim-candidate:np)
-  ^-  (list transition-candidate)
-  %+  turn  cands
-  |=  c=nns-claim-candidate:np
+++  prekey-claims
+  |=  claims=(list nns-claim:np)
+  ^-  (list transition-claim)
+  %+  turn  claims
+  |=  c=nns-claim:np
   [(name-key:na name.c) c]
 ::
 ::  Flatten accumulator for transition subjects (opaque list of rows).
 ::
 ++  z-map-to-name-list
   |=  acc=nns-accumulator:na
-  ^-  *
+  ^-  (list [nns-name-key:na nns-accumulator-entry:na])
   ~(tap z-by acc)
+::
+::  First limb of a name-key (cheap @ux for trace FWW; host keeps full keys).
+::
+++  name-key-limb
+  |=  k=nns-name-key:na
+  ^-  @ux
+  =/  [k0=@ux k1=@ux k2=@ux k3=@ux k4=@ux]  k
+  k0
+::
+::  First z-map row tag from ++z-map-to-name-list output (0 if empty).
+::
+++  acc-list-head-key
+  |=  rows=(list [nns-name-key:na nns-accumulator-entry:na])
+  ^-  @ux
+  ?~  rows  0x0
+  (name-key-limb +2.i.rows)
 ::
 ::  --- Y3 recursive transition formula (the real per-block step) ---
 ::
@@ -481,7 +413,7 @@
 ::    verify(prev_recursive_proof)
 ::    verify:sp-verifier(block_proof)
 ::    page.parent == last_proved_digest
-::    claim-scanner(old_acc, page, candidates) == new_acc
+::    claim-scanner(old_acc, page, claims) == new_acc
 ::    height and digest are consistent
 ::
 ::  The subject carries everything the formula needs to re-execute the
@@ -492,7 +424,7 @@
 ::  Current practical note (2026-05):
 ::    - verify(prev) is now a pure Nock 0-6 tree (see below).
 ::    - The claim-scanner part has been reduced to a minimal first-writer-wins
-::      z-map insert that avoids the full `valid-claim-candidate` gate tree
+::      z-map insert that avoids the full `valid-claim` gate tree
 ::      (which contains many Nock 9 calls).  This lets us produce real
 ::      transition proofs today.  The full predicate bundle can be restored
 ::      the moment Nock 9/10/11 support lands.
@@ -515,14 +447,14 @@
           prev-height=@ud
           old-acc=nns-accumulator:na
           pag=nns-page-summary:np
-          cands=(list nns-claim-candidate:np)
+          claims=(list nns-claim:np)
           block-proof=*
           want-height=@ud
           want-digest=@ux
       ==
   ^-  ?
   ?.  (prev-proof-ok-spec prev-proof prev-height)  %.n
-  =/  new-acc  (minimal-first-writer-wins old-acc cands want-height digest.pag)
+  =/  new-acc  (minimal-first-writer-wins old-acc claims want-height digest.pag)
   ?.  =(want-height +(prev-height))  %.n
   ?.  =(want-digest digest.pag)  %.n
   %.y
@@ -535,15 +467,15 @@
 ::
 ++  minimal-first-writer-wins
   |=  $:  old-acc=nns-accumulator:na
-          cands=(list nns-claim-candidate:np)
+          claims=(list nns-claim:np)
           height=@ud
           digest=@ux
       ==
   ^-  nns-accumulator:na
   =/  acc  old-acc
   |-  ^-  nns-accumulator:na
-  ?~  cands  acc
-  =/  c  i.cands
+  ?~  claims  acc
+  =/  c  i.claims
   =/  k  (name-key:na name.c)
   =/  acc
     ?:  (~(has z-by acc) k)
@@ -551,7 +483,7 @@
     =/  ent=nns-accumulator-entry:na
       [name.c owner.c tx-hash.c height digest]
     (~(put z-by acc) k ent)
-  $(cands t.cands)
+  $(claims t.claims)
 ::
 ::  Local arm that performs the subject-bundled verify of a previous
 ::  recursive proof (the same technique from the old Y0 spike, now
@@ -609,35 +541,43 @@
           prev-height=@ud
           old-acc=nns-accumulator:na
           pag=nns-page-summary:np
-          cands=(list nns-claim-candidate:np)
+          claims=(list nns-claim:np)
           block-proof=*
           want-digest=@ux
       ==
   ^-  [subject=* formula=*]
   =/  want-height=@ud  +(prev-height)
   =/  page-d=@ux  digest.pag
-  ::  Empty cands: 4-tuple subject (height/digest only).
-  ?:  ?=(@ cands)
+  ::  Empty claims: 4-tuple subject (height/digest only).
+  ?:  ?=(@ claims)
     =/  sub=*  [prev-height page-d want-height page-d]
     =/  form=*  (build-transition-trace-formula-empty want-height page-d)
     [sub form]
-  ::  Non-empty: ≤1 candidate; acc may include genesis TLD row.
-  =/  keyed=(list transition-candidate)  (prekey-candidates cands)
+  ::  Non-empty: ≤1 claim; acc may include genesis TLD row.
+  =/  keyed=(list transition-claim)  (prekey-claims claims)
   ?.  (lte (lent keyed) 1)
-    ~|(%recursive-transition-too-many-candidates !!)
-  =/  acc-list=*  (z-map-to-name-list old-acc)
-  =/  packed-prev=*  [prev-proof [prev-subj prev-form]]
+    ~|(%recursive-transition-too-many-claims !!)
+  =/  acc-rows=(list [nns-name-key:na nns-accumulator-entry:na])
+    (z-map-to-name-list old-acc)
+  =/  acc-tag=@ux  (acc-list-head-key acc-rows)
+  =/  cand-tag=@ux
+    ?~  keyed  0x0
+    (name-key-limb key.i.keyed)
+  =/  proof-len=@ud
+    ?:  ?=(@ prev-proof)
+      (met 3 prev-proof)
+    0
   =/  sub=*
-    :*  packed-prev
+    :*  proof-len
         prev-height
-        acc-list
-        pag
-        keyed
+        digest.pag
+        acc-tag
+        cand-tag
         block-proof
         want-height
         want-digest
     ==
-  =/  form=*  y-transition-full-trace-formula
+  =/  form=*  (transition-trace-formula-full prev-height want-height)
   [sub form]
 ::
 ::  Host-only: trace formula `.*` product agrees with ++transition-spec.
@@ -653,8 +593,31 @@
   ?.  ?=(%& -.dry-run)  %.n
   ?.  ?=(%.y p.dry-run)  %.n
   =/  pag=nns-page-summary:np  [page-d ~]
-  =/  cands=(list nns-claim-candidate:np)  ~
-  (transition-spec 0x1 0 0 prev-height old-acc pag cands 0 want-h page-d)
+  =/  claims=(list nns-claim:np)  ~
+  (transition-spec 0x1 0 0 prev-height old-acc pag claims 0 want-h page-d)
+::
+::  Host-only: one-claim full transition trace vs ++transition-spec.
+::
+++  y3-transition-full-trace-spec-parity
+  |=  [prev-proof=* prev-height=@ud old-acc=nns-accumulator:na pag=nns-page-summary:np claims=(list nns-claim:np)]
+  ^-  ?
+  =/  samp
+    %-  build-recursive-transition-inputs
+    :*  prev-proof
+        0
+        0
+        prev-height
+        old-acc
+        pag
+        claims
+        0
+        digest.pag
+    ==
+  =/  dry-run
+    %-  mule  |.  .*(subject.samp formula.samp)
+  ?.  ?=(%& -.dry-run)  %.n
+  ?.  ?=(%.y p.dry-run)  %.n
+  (transition-spec prev-proof 0 0 prev-height old-acc pag claims 0 +(prev-height) digest.pag)
 ::
 ::  Host-only: trace formula `.*` product agrees with ++genesis-recursive-formula.
 ::
@@ -887,6 +850,18 @@
         0x1
       ``(y3-transition-empty-trace-spec-parity prev-h page-d acc)
         ::
+        [%y3-parity-transition-full ~]
+      =/  acc=nns-accumulator:na
+        (ensure-genesis-tld accumulator.state)
+      =/  prev-h=@ud  nns-genesis-height
+      =/  page-d=@ux  0x1
+      =/  pag=nns-page-summary:np  [page-d ~]
+      =/  wit=nns-raw-tx-witness:np  [0x1 0x1 0 '']
+      =/  claims=(list nns-claim:np)
+        :~  ['nockchain.nock' 'o' 0 0x1 wit]
+        ==
+      ``(y3-transition-full-trace-spec-parity 0x1 prev-h acc pag claims)
+        ::
     ==
   ::
   ++  poke
@@ -900,7 +875,7 @@
     ?-  -.u.act
         ::
         ::  Path Y2: %scan-block — parent link + height monotonicity,
-        ::  then `+claim-scanner:np` over the supplied candidates.
+        ::  then `+claim-scanner:np` over the supplied claims.
         ::
         %scan-block
       =/  c  u.act
@@ -932,7 +907,7 @@
       =/  acc-run
         %-  mule
         |.
-        (claim-scanner:np accumulator.state pag height.c candidates.c)
+        (claim-scanner:np accumulator.state pag height.c claims.c)
       ?.  ?=(%& -.acc-run)
         ~>  %slog.[2 'nns: %scan-block claim-scanner trapped']
         :_  state
@@ -1272,6 +1247,7 @@
       =/  the-proof=proof:vp  p.pr
       =.  last-proved.state  `[subj form]
       =.  recursive-proof.state  `[the-proof subj form]
+      =.  last-proved-height.state  nns-genesis-height
       :_  state
       ^-  (list effect)
       :~  [%genesis-recursive-dry-run-ok dry-ok]
@@ -1280,15 +1256,15 @@
       ::
         ::  Y3: %prove-recursive-transition — the real per-block recursive step.
         ::  Cues the previous proof triple, builds the transition subject using
-        ::  the current accumulator + the new page/candidates/block-proof,
+        ::  the current accumulator + the new page/claims/block-proof,
         ::  runs prove-computation on the 0–8 trace formula from
         ::  ++build-recursive-transition-inputs (spec: ++transition-spec), and on
         ::  success commits the new proof into recursive-proof.state.
         ::
         %prove-recursive-transition
       =/  p  u.act
-      =/  cands=(list nns-claim-candidate:np)
-        ;;((list nns-claim-candidate:np) candidates.p)
+      =/  claims=(list nns-claim:np)
+        ;;((list nns-claim:np) claims.p)
       =/  pag=nns-page-summary:np
         [page-digest.p ;;((list @ux) page-tx-ids.p)]
       =/  prev-proof=*
@@ -1318,19 +1294,23 @@
         ?.  ?=(%& -.cue-res)
           ~|(%prev-formula-cue-failed !!)
         p.cue-res
+      =/  prev-h=@ud
+        ?:  (gth last-proved-height.state 0)
+          last-proved-height.state
+        nns-genesis-height
       =/  [subj=* form=*]
         %-  build-recursive-transition-inputs
         :*  prev-proof
             prev-subj
             prev-form
-            last-proved-height.state
+            prev-h
             accumulator.state
             pag
-            cands
+            claims
             block-proof.p
             digest.pag
         ==
-      ~&  ['chained' 'cands' (lent cands) 'subj' (met 3 (jam subj)) 'form' (met 3 (jam form))]
+      ~&  ['chained' 'claims' (lent claims) 'subj' (met 3 (jam subj)) 'form' (met 3 (jam form))]
       =/  dry-run
         %-  mule  |.  .*(subj form)
       ?.  ?=(%& -.dry-run)

@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 use crate::chain::{
     base58_hash_to_atom_bytes, canonical_z_set_tx_order, fetch_current_tip_height,
     prefetch_scan_blocks_for_heights, scan_cursor_is_genesis_boot,
-    sort_claim_candidates_by_z_set_tx_order, validate_scan_block_chain,
+    sort_claims_by_z_set_tx_order, validate_scan_block_chain,
 };
 use crate::claim_note::ClaimNoteV1;
 use crate::kernel::{
@@ -48,10 +48,10 @@ fn format_tx_id_previews(ids: &[Vec<u8>], max: usize) -> String {
     format!("[{}]{suffix}", out.join(", "))
 }
 
-fn format_candidates_for_log(candidates: &[ClaimCandidate]) -> String {
+fn format_claims_for_log(claims: &[ClaimCandidate]) -> String {
     const MAX: usize = 12;
     let mut parts = Vec::new();
-    for c in candidates.iter().take(MAX) {
+    for c in claims.iter().take(MAX) {
         parts.push(format!(
             "(name={:?} owner={:?} fee={} tx_hash={} wit.tx={} wit.spender={} wit.amt={} wit.treas={:?})",
             c.name,
@@ -64,8 +64,8 @@ fn format_candidates_for_log(candidates: &[ClaimCandidate]) -> String {
             c.witness.output_lock_root,
         ));
     }
-    if candidates.len() > MAX {
-        parts.push(format!("…(+{} more candidates)", candidates.len() - MAX));
+    if claims.len() > MAX {
+        parts.push(format!("…(+{} more claims)", claims.len() - MAX));
     }
     parts.join(" ")
 }
@@ -351,29 +351,29 @@ pub async fn apply_prefetched_scan_blocks(
     apply_prefetched_scan_blocks_inner(state, prefetched, None, None).await
 }
 
-/// Like [`apply_prefetched_scan_blocks`], but supplies explicit claim candidates per block
+/// Like [`apply_prefetched_scan_blocks`], but supplies explicit claim claims per block
 /// (skips gRPC-shaped transaction extraction). Used by integration tests that construct
 /// canonical `%scan-block` payloads directly (e.g. minimal `@ux` tx-id atoms).
-pub async fn apply_prefetched_scan_blocks_with_candidates(
+pub async fn apply_prefetched_scan_blocks_with_claims(
     state: &SharedState,
     prefetched: Vec<crate::chain::ScanBlockFetch>,
-    candidates_per_block: Vec<Vec<ClaimCandidate>>,
+    claims_per_block: Vec<Vec<ClaimCandidate>>,
 ) -> Result<Option<ScanBlockOutcome>, String> {
-    if prefetched.len() != candidates_per_block.len() {
+    if prefetched.len() != claims_per_block.len() {
         return Err(format!(
-            "candidates_per_block length {} does not match prefetched blocks {}",
-            candidates_per_block.len(),
+            "claims_per_block length {} does not match prefetched blocks {}",
+            claims_per_block.len(),
             prefetched.len()
         ));
     }
-    apply_prefetched_scan_blocks_inner(state, prefetched, None, Some(candidates_per_block)).await
+    apply_prefetched_scan_blocks_inner(state, prefetched, None, Some(claims_per_block)).await
 }
 
 async fn apply_prefetched_scan_blocks_inner(
     state: &SharedState,
     prefetched: Vec<crate::chain::ScanBlockFetch>,
     trace: Option<FollowerScanTrace>,
-    injected_candidates: Option<Vec<Vec<ClaimCandidate>>>,
+    injected_claims: Option<Vec<Vec<ClaimCandidate>>>,
 ) -> Result<Option<ScanBlockOutcome>, String> {
     if prefetched.is_empty() {
         return Ok(None);
@@ -411,16 +411,16 @@ async fn apply_prefetched_scan_blocks_inner(
         let page_tx_for_poke = canonical_z_set_tx_order(block.page_tx_ids.clone())
             .map_err(|e| format!("canonical tx-id order: {e}"))?;
 
-        let candidates = if let Some(ref inj) = injected_candidates {
-            sort_claim_candidates_by_z_set_tx_order(
+        let claims = if let Some(ref inj) = injected_claims {
+            sort_claims_by_z_set_tx_order(
                 &page_tx_for_poke,
                 inj.get(idx)
                     .cloned()
-                    .ok_or_else(|| format!("injected candidates missing for block index {idx}"))?,
+                    .ok_or_else(|| format!("injected claims missing for block index {idx}"))?,
             )
-            .map_err(|e| format!("sort injected scan candidates: {e}"))?
+            .map_err(|e| format!("sort injected scan claims: {e}"))?
         } else {
-            extract_claim_candidates(&block.tx_details)?
+            extract_claims(&block.tx_details)?
         };
 
         if let Some(t) = trace.as_ref() {
@@ -434,8 +434,8 @@ async fn apply_prefetched_scan_blocks_inner(
                 page_digest = %atom_hex_preview(&block.page_digest, 16),
                 page_tx_count = page_tx_for_poke.len(),
                 page_tx_ids_preview = %format_tx_id_previews(&page_tx_for_poke, 8),
-                claim_candidates_count = candidates.len(),
-                claim_candidates = %format_candidates_for_log(&candidates),
+                claims_count = claims.len(),
+                claims = %format_claims_for_log(&claims),
                 "chain_follower: %scan-block poke payload (Tip5 atoms are LE 40B; compare with kernel last_proved_digest)"
             );
         } else {
@@ -443,7 +443,7 @@ async fn apply_prefetched_scan_blocks_inner(
                 height = block.height,
                 parent = %atom_hex_preview(&block.parent, 16),
                 page_digest = %atom_hex_preview(&block.page_digest, 16),
-                claim_candidates_count = candidates.len(),
+                claims_count = claims.len(),
                 "chain_follower (test harness): %scan-block poke"
             );
         }
@@ -457,7 +457,7 @@ async fn apply_prefetched_scan_blocks_inner(
                     block.height,
                     &block.page_digest,
                     &page_tx_for_poke,
-                    &candidates,
+                    &claims,
                 ),
             )
             .await
@@ -489,7 +489,7 @@ async fn apply_prefetched_scan_blocks_inner(
         if let Some(done) = first_scan_block_done(&effects) {
             // === Success path for this block ===
             // Y3: attempt recursive transition for the block we just successfully scanned
-            try_y3_recursive_transition_after_block(state, &block, &candidates).await;
+            try_y3_recursive_transition_after_block(state, &block, &claims).await;
 
             state.maybe_persist_after_follower_scan().await;
 
@@ -542,27 +542,27 @@ async fn apply_prefetched_scan_blocks_inner(
     }))
 }
 
-/// Extract NNS claim candidates from one prefetched block (for tests / tooling).
+/// Extract NNS claim claims from one prefetched block (for tests / tooling).
 ///
 /// **`ScanBlockFetch` from [`crate::chain::fetch_scan_block_inputs`]** already has
 /// tx rows in z-set canonical order. For hand-built stubs, call
-/// [`crate::chain::sort_claim_candidates_by_z_set_tx_order`] if needed.
-pub fn claim_candidates_from_fetch(block: &crate::chain::ScanBlockFetch) -> Result<Vec<crate::kernel::ClaimCandidate>, String> {
-    extract_claim_candidates(&block.tx_details)
+/// [`crate::chain::sort_claims_by_z_set_tx_order`] if needed.
+pub fn claims_from_fetch(block: &crate::chain::ScanBlockFetch) -> Result<Vec<crate::kernel::ClaimCandidate>, String> {
+    extract_claims(&block.tx_details)
 }
 
-fn extract_claim_candidates(details: &[TransactionDetails]) -> Result<Vec<ClaimCandidate>, String> {
-    let mut candidates = Vec::new();
+fn extract_claims(details: &[TransactionDetails]) -> Result<Vec<ClaimCandidate>, String> {
+    let mut claims = Vec::new();
     for tx in details {
-        candidates.extend(extract_claim_candidates_from_transaction(tx)?);
+        claims.extend(extract_claims_from_transaction(tx)?);
     }
-    Ok(candidates)
+    Ok(claims)
 }
 
-fn extract_claim_candidates_from_transaction(
+fn extract_claims_from_transaction(
     details: &TransactionDetails,
 ) -> Result<Vec<ClaimCandidate>, String> {
-    let mut candidates = Vec::new();
+    let mut claims = Vec::new();
     for output in &details.outputs {
         let Some(note_data) = output.note_data.as_ref() else {
             continue;
@@ -590,7 +590,7 @@ fn extract_claim_candidates_from_transaction(
         }
         let tx_hash = base58_hash_to_atom_bytes(effective_tx_id)?;
         let actual_tx_hash = base58_hash_to_atom_bytes(tx_id_expected)?;
-        let Some(owner) = infer_claim_owner_for_candidate(details, &note) else {
+        let Some(owner) = infer_claim_owner_for_claim(details, &note) else {
             tracing::warn!(
                 tx_id = %tx_id_expected,
                 name = %note.name,
@@ -619,11 +619,11 @@ fn extract_claim_candidates_from_transaction(
                 name = %note.name,
                 treasury_nicks = witness.treasury_amount,
                 min_fee_nicks = min_fee,
-                "nns: claim candidate treasury sum below fee schedule (lock decode / \
+                "nns: claim claim treasury sum below fee schedule (lock decode / \
                  output filter may not match this tx; kernel would reject witness-underpaid)"
             );
         }
-        candidates.push(ClaimCandidate {
+        claims.push(ClaimCandidate {
             fee: min_fee,
             name: note.name,
             owner,
@@ -631,13 +631,13 @@ fn extract_claim_candidates_from_transaction(
             witness,
         });
     }
-    Ok(candidates)
+    Ok(claims)
 }
 
 /// When the on-chain `blob` is a **path** (`nns/v1/claim/<name>.nock`), `owner` is empty in
 /// [`ClaimNoteV1`]. Resolve it from `signer_pubkey_b58` (unique across inputs), or legacy
 /// distinct `note_name_b58` when signer lists are empty.
-fn infer_claim_owner_for_candidate(details: &TransactionDetails, note: &ClaimNoteV1) -> Option<String> {
+fn infer_claim_owner_for_claim(details: &TransactionDetails, note: &ClaimNoteV1) -> Option<String> {
     let o = note.owner.trim();
     if !o.is_empty() {
         return Some(o.to_string());
@@ -725,7 +725,7 @@ fn note_data_from_proto(data: &PbNoteData) -> NoteData {
     )
 }
 
-/// Y3 helper: after a successful %scan-block for `block` with the given `candidates`,
+/// Y3 helper: after a successful %scan-block for `block` with the given `claims`,
 /// attempt to produce the recursive transition proof.
 ///
 /// This is called from the success path inside `apply_prefetched_scan_blocks_inner`.
@@ -733,7 +733,7 @@ fn note_data_from_proto(data: &PbNoteData) -> NoteData {
 async fn try_y3_recursive_transition_after_block(
     state: &SharedState,
     block: &crate::chain::ScanBlockFetch,
-    candidates: &[ClaimCandidate],
+    claims: &[ClaimCandidate],
 ) {
     // Peek the recursive proof that existed *before* this scan block
     let prev_triple = {
@@ -756,7 +756,7 @@ async fn try_y3_recursive_transition_after_block(
         &prev_form,
         &block.page_digest,
         &tx_ids,
-        candidates,
+        claims,
         &[], // TODO: pass the real Nockchain block sp proof for verify:sp-verifier
     );
 

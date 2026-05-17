@@ -11,7 +11,7 @@ use serde_json::Value;
 use nns_vesl::chain::{
     canonical_z_set_tx_order, tip5_hash_to_tx_atom_bytes, NNS_GENESIS_HEIGHT as H0,
 };
-use nns_vesl::chain_follower::apply_prefetched_scan_blocks_with_candidates;
+use nns_vesl::chain_follower::apply_prefetched_scan_blocks_with_claims;
 use nns_vesl::kernel::build_scan_state_peek;
 use nns_vesl::kernel::{decode_scan_state, ClaimCandidate, ClaimWitness};
 use nns_vesl::payment::{fee_for_name, TREASURY_LOCK_ROOT_B58};
@@ -170,14 +170,14 @@ async fn same_block_same_name_z_set_order_wins_not_rpc_list_order() {
         )
     };
 
-    // Intentionally pass candidates in **wrong** scan order (loser before winner)
-    let candidates_wrong = vec![c_loser, c_winner];
+    // Intentionally pass claims in **wrong** scan order (loser before winner)
+    let claims_wrong = vec![c_loser, c_winner];
 
     let (_tmp, state) = setup().await;
     let mut parent = peek_last_proved_digest(&state).await;
 
     let b1 = scan_block_fetch_stub(H0, parent.clone(), digest40(0xE1), vec![]);
-    apply_prefetched_scan_blocks_with_candidates(&state, vec![b1], vec![vec![]])
+    apply_prefetched_scan_blocks_with_claims(&state, vec![b1], vec![vec![]])
         .await
         .expect("block 1")
         .expect("outcome");
@@ -189,7 +189,7 @@ async fn same_block_same_name_z_set_order_wins_not_rpc_list_order() {
         digest40(0xE2),
         vec![atom_hi.clone(), atom_lo.clone()],
     );
-    apply_prefetched_scan_blocks_with_candidates(&state, vec![b2], vec![candidates_wrong])
+    apply_prefetched_scan_blocks_with_claims(&state, vec![b2], vec![claims_wrong])
         .await
         .expect("block 2")
         .expect("outcome");

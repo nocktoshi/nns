@@ -70,7 +70,7 @@ The kernel (`hoon/app/app.hoon`) uses **`v0-state`**: an **`nns-accumulator`**
 (z-map of registered names), **`last-proved-height`** / **`last-proved-digest`**
 (scan cursor), Vesl graft fragment, and optional STARK plumbing (`last-proved`,
 `%prove-arbitrary`, `%verify-stark`, …). The [**chain follower**](src/chain_follower.rs)
-loads block data from the configured RPC, validates claim candidates with
+loads block data from the configured RPC, validates claim claims with
 [**`nns-predicates`**](hoon/lib/nns-predicates.hoon), and pokes **`%scan-block`**
 so each valid on-chain **`nns/v1/claim`** note is applied in canonical
 **(block height, tx index)** order.
@@ -94,7 +94,7 @@ follower walks blocks in height order and applies **`%scan-block`** so the
 accumulator fold matches what every other honest follower sees.
 
 Predicate rules (format, fee, name uniqueness, payment replay, etc.) live in
-`nns-predicates` and are evaluated as candidates enter the scan pipeline — see
+`nns-predicates` and are evaluated as claims enter the scan pipeline — see
 [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full proof and wallet story.
 
 ## Security/Trust model

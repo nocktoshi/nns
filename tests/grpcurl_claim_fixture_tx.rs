@@ -24,7 +24,7 @@ use nockapp_grpc::pb::public::v2::{
     TransactionDetails, TransactionInput, TransactionOutput,
 };
 use nns_vesl::chain::{canonical_z_set_tx_order, ScanBlockFetch, NNS_GENESIS_HEIGHT as H0};
-use nns_vesl::chain_follower::{apply_prefetched_scan_blocks, claim_candidates_from_fetch};
+use nns_vesl::chain_follower::{apply_prefetched_scan_blocks, claims_from_fetch};
 use nns_vesl::claim_note::ClaimNoteV1;
 use nns_vesl::kernel::{
     build_scan_block_poke, build_scan_state_peek, decode_scan_state, first_scan_block_done,
@@ -35,7 +35,7 @@ use nockchain_client_rs::{NoteData, NoteDataEntry};
 use vesl_core::SettlementConfig;
 
 /// Synthetic owner for the fixture tx: must match every input's `signer_pubkey_b58` so
-/// path-style blobs (empty owner in note-data) still produce a kernel-consistent candidate.
+/// path-style blobs (empty owner in note-data) still produce a kernel-consistent claim.
 const GRPCURL_FIXTURE_OWNER_B58: &str = "grpcurlFixtureSignerPubkeyB58Placeholder";
 
 static INIT_TRACING: Once = Once::new();
@@ -184,19 +184,19 @@ fn grpcurl_fixture_claim_decodes_and_matches_tx_id() {
     assert_eq!(claim.name, "nockchain.nock");
     assert!(claim.owner.is_empty() && claim.tx_hash.is_empty());
     let details = fixture_transaction_details();
-    let cands = claim_candidates_from_fetch(&nns_vesl::chain::ScanBlockFetch {
+    let claims = claims_from_fetch(&nns_vesl::chain::ScanBlockFetch {
         height: 0,
         page_digest: vec![],
         parent: vec![],
         page_tx_ids: vec![],
         tx_details: vec![details],
     })
-    .expect("candidates");
-    assert_eq!(cands.len(), 1);
-    assert_eq!(cands[0].name, "nockchain.nock");
-    assert_eq!(cands[0].owner, GRPCURL_FIXTURE_OWNER_B58);
+    .expect("claims");
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].name, "nockchain.nock");
+    assert_eq!(claims[0].owner, GRPCURL_FIXTURE_OWNER_B58);
     assert_eq!(
-        cands[0].tx_hash,
+        claims[0].tx_hash,
         nns_vesl::chain::base58_hash_to_atom_bytes(
             "8FGo74Qm29C8XTsDTdaaeXvGix2rS7reWQuF2Qj84GypetGW3ufFB5d"
         )
@@ -274,10 +274,10 @@ async fn grpcurl_fixture_accumulator_inserts_claimed_name() {
         tx_details: vec![details],
     };
 
-    let candidates = claim_candidates_from_fetch(&fetch2).expect("extract");
-    assert_eq!(candidates.len(), 1);
+    let claims = claims_from_fetch(&fetch2).expect("extract");
+    assert_eq!(claims.len(), 1);
     assert!(
-        candidates[0].witness.treasury_amount >= fee_for_name(&candidates[0].name),
+        claims[0].witness.treasury_amount >= fee_for_name(&claims[0].name),
         "witness treasury must cover fee"
     );
 
@@ -300,7 +300,7 @@ async fn grpcurl_fixture_accumulator_inserts_claimed_name() {
 
     // Next height after claim block: duplicate-name rescan still succeeds.
     let d3 = digest40(0xC3);
-    let poke3 = build_scan_block_poke(&d2, H0 + 2, &d3, &page_tx_ids, &candidates);
+    let poke3 = build_scan_block_poke(&d2, H0 + 2, &d3, &page_tx_ids, &claims);
     let mut k = state.kernel.lock().await;
     let fx = k
         .poke(nockapp::wire::SystemWire.to_wire(), poke3)

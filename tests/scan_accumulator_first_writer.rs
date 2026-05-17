@@ -1,11 +1,11 @@
 //! Mock “RPC” by building [`nns_vesl::chain::ScanBlockFetch`] in memory.
 //!
-//! ## Full-chain claim scan (`%scan-block` with passing candidates)
+//! ## Full-chain claim scan (`%scan-block` with passing claims)
 //!
 //! The kernel wraps `+claim-scanner` and `+root-atom:na` in `+mule`. Successful inserts compute
 //! the accumulator root via `+root-from-hashable:na` (Tip5 `hash-hashable` over a canonical
 //! encoding). Predicate failures (underpaid treasury, sender mismatch, tx-id mismatch, etc.)
-//! short-circuit `+valid-claim-candidate` and **do not** trap — `claim-scanner-trap` means the
+//! short-circuit `+valid-claim` and **do not** trap — `claim-scanner-trap` means the
 //! interpreter crashed inside `+claim-scanner` (for example a jet fault during `+insert:na`),
 //! not “this claim was rejected”.
 //!
@@ -27,7 +27,7 @@ use serde_json::{json, Value};
 use nns_vesl::chain::NNS_GENESIS_HEIGHT as H0;
 use nns_vesl::chain::ScanBlockFetch;
 use nns_vesl::chain_follower::{
-    apply_prefetched_scan_blocks, apply_prefetched_scan_blocks_with_candidates,
+    apply_prefetched_scan_blocks, apply_prefetched_scan_blocks_with_claims,
 };
 use nns_vesl::kernel::{
     build_scan_block_poke, build_scan_state_peek, first_scan_block_done, first_scan_block_error,
@@ -57,7 +57,7 @@ fn digest40(seed: u8) -> Vec<u8> {
     vec![seed; 40]
 }
 
-/// Header-only block when using [`apply_prefetched_scan_blocks_with_candidates`].
+/// Header-only block when using [`apply_prefetched_scan_blocks_with_claims`].
 fn scan_block_fetch_stub(
     height: u64,
     parent: Vec<u8>,
@@ -73,7 +73,7 @@ fn scan_block_fetch_stub(
     }
 }
 
-fn synthetic_claim_candidate(
+fn synthetic_claim(
     name: &str,
     owner: &str,
     tx_atom_byte: u8,
@@ -179,7 +179,7 @@ async fn get_accumulator_json(
     body
 }
 
-// --- Regression: invalid candidates are skipped (no trap) ------------------------------------
+// --- Regression: invalid claims are skipped (no trap) ------------------------------------
 
 #[tokio::test]
 async fn scan_block_skips_underpaid_witness() {
@@ -194,7 +194,7 @@ async fn scan_block_skips_underpaid_witness() {
         assert!(first_scan_block_done(&fx).is_some());
     }
     let parent1 = peek_last_proved_digest(&state).await;
-    let mut cand = synthetic_claim_candidate(NAME, "owner-address", 0x07, fee_amt);
+    let mut cand = synthetic_claim(NAME, "owner-address", 0x07, fee_amt);
     cand.witness.treasury_amount = 0;
     let poke2 = build_scan_block_poke(
         &parent1,
@@ -223,7 +223,7 @@ async fn scan_block_skips_sender_mismatch() {
             .expect("height-1 poke");
     }
     let parent1 = peek_last_proved_digest(&state).await;
-    let mut cand = synthetic_claim_candidate(NAME, "owner-address", 0x07, fee_amt);
+    let mut cand = synthetic_claim(NAME, "owner-address", 0x07, fee_amt);
     cand.witness.spender_pkh = b"not-the-owner".to_vec();
     let poke2 = build_scan_block_poke(
         &parent1,
@@ -252,7 +252,7 @@ async fn scan_block_skips_witness_tx_id_mismatch() {
             .expect("height-1 poke");
     }
     let parent1 = peek_last_proved_digest(&state).await;
-    let mut cand = synthetic_claim_candidate(NAME, "owner-address", 0x07, fee_amt);
+    let mut cand = synthetic_claim(NAME, "owner-address", 0x07, fee_amt);
     cand.witness.tx_id = vec![0x99];
     let poke2 = build_scan_block_poke(
         &parent1,
@@ -267,7 +267,7 @@ async fn scan_block_skips_witness_tx_id_mismatch() {
     assert!(first_scan_block_done(&fx).is_some());
 }
 
-/// Block 1 empty scan + block 2–3 with injected candidates; GET `/accumulator/<name>` → first
+/// Block 1 empty scan + block 2–3 with injected claims; GET `/accumulator/<name>` → first
 /// owner (first-writer-wins).
 #[tokio::test]
 async fn mock_chain_three_blocks_first_claim_address_wins_in_accumulator() {
@@ -298,16 +298,16 @@ async fn mock_chain_three_blocks_first_claim_address_wins_in_accumulator() {
         d2,
         vec![vec![0x07], vec![0x08]],
     );
-    let cand2 = vec![synthetic_claim_candidate(NAME, ADDR1, 0x07, treasury)];
-    apply_prefetched_scan_blocks_with_candidates(&state, vec![b2], vec![cand2])
+    let cand2 = vec![synthetic_claim(NAME, ADDR1, 0x07, treasury)];
+    apply_prefetched_scan_blocks_with_claims(&state, vec![b2], vec![cand2])
         .await
         .expect("apply block 2")
         .expect("scan outcome");
     parent = peek_last_proved_digest(&state).await;
 
     let b3 = scan_block_fetch_stub(H0 + 2, parent, d3, vec![vec![0x09]]);
-    let cand3 = vec![synthetic_claim_candidate(NAME, ADDR2, 0x09, treasury)];
-    apply_prefetched_scan_blocks_with_candidates(&state, vec![b3], vec![cand3])
+    let cand3 = vec![synthetic_claim(NAME, ADDR2, 0x09, treasury)];
+    apply_prefetched_scan_blocks_with_claims(&state, vec![b3], vec![cand3])
         .await
         .expect("apply block 3")
         .expect("scan outcome");
@@ -319,8 +319,8 @@ async fn mock_chain_three_blocks_first_claim_address_wins_in_accumulator() {
 }
 
 /// Block 1 advances the anchored digest; block 2 contains two valid claims for the **same** name
-/// from different owners. `+claim-scanner:np` folds candidates in list order (same as tx order in
-/// the poke); `+insert:na` is first-winner-wins, so the **first** passing candidate wins the row.
+/// from different owners. `+claim-scanner:np` folds claims in list order (same as tx order in
+/// the poke); `+insert:na` is first-winner-wins, so the **first** passing claim wins the row.
 #[tokio::test]
 async fn same_block_two_addresses_claim_same_name_first_in_block_wins() {
     const NAME: &str = "xy.nock";
@@ -345,11 +345,11 @@ async fn same_block_two_addresses_claim_same_name_first_in_block_wins() {
         digest40(0xC2),
         vec![vec![0x07], vec![0x08]],
     );
-    let candidates = vec![
-        synthetic_claim_candidate(NAME, ADDR1, 0x07, treasury),
-        synthetic_claim_candidate(NAME, ADDR2, 0x08, treasury),
+    let claims = vec![
+        synthetic_claim(NAME, ADDR1, 0x07, treasury),
+        synthetic_claim(NAME, ADDR2, 0x08, treasury),
     ];
-    apply_prefetched_scan_blocks_with_candidates(&state, vec![b2], vec![candidates])
+    apply_prefetched_scan_blocks_with_claims(&state, vec![b2], vec![claims])
         .await
         .expect("apply block 2")
         .expect("scan outcome");
@@ -359,7 +359,7 @@ async fn same_block_two_addresses_claim_same_name_first_in_block_wins() {
     let value = body["value"].as_object().expect("registered value");
     assert_eq!(
         value["owner"], ADDR1,
-        "first candidate in block tx order must win when two claims target the same name"
+        "first claim in block tx order must win when two claims target the same name"
     );
 }
 
@@ -384,8 +384,8 @@ async fn sequential_nns_then_nockchain_both_accumulate() {
 
     let d2 = digest40(0xD2);
     let b2 = scan_block_fetch_stub(H0 + 1, parent.clone(), d2.clone(), vec![vec![0x71]]);
-    let cand_nns = vec![synthetic_claim_candidate("nns.nock", OWNER, 0x71, fee_nns)];
-    apply_prefetched_scan_blocks_with_candidates(&state, vec![b2], vec![cand_nns])
+    let cand_nns = vec![synthetic_claim("nns.nock", OWNER, 0x71, fee_nns)];
+    apply_prefetched_scan_blocks_with_claims(&state, vec![b2], vec![cand_nns])
         .await
         .expect("apply block 2")
         .expect("scan outcome");
@@ -393,8 +393,8 @@ async fn sequential_nns_then_nockchain_both_accumulate() {
 
     let d3 = digest40(0xD3);
     let b3 = scan_block_fetch_stub(H0 + 2, parent, d3, vec![vec![0x81]]);
-    let cand_nc = vec![synthetic_claim_candidate("nockchain.nock", OWNER, 0x81, fee_nc)];
-    apply_prefetched_scan_blocks_with_candidates(&state, vec![b3], vec![cand_nc])
+    let cand_nc = vec![synthetic_claim("nockchain.nock", OWNER, 0x81, fee_nc)];
+    apply_prefetched_scan_blocks_with_claims(&state, vec![b3], vec![cand_nc])
         .await
         .expect("apply block 3")
         .expect("scan outcome");
@@ -423,8 +423,8 @@ async fn sequential_aa_then_bb_two_distinct_names_accumulate() {
 
     let d2 = digest40(0xF2);
     let b2 = scan_block_fetch_stub(H0 + 1, parent.clone(), d2.clone(), vec![vec![0xA1]]);
-    let cand1 = vec![synthetic_claim_candidate("aa.nock", OWNER, 0xA1, fee_aa)];
-    apply_prefetched_scan_blocks_with_candidates(&state, vec![b2], vec![cand1])
+    let cand1 = vec![synthetic_claim("aa.nock", OWNER, 0xA1, fee_aa)];
+    apply_prefetched_scan_blocks_with_claims(&state, vec![b2], vec![cand1])
         .await
         .expect("apply block 2")
         .expect("scan outcome");
@@ -432,8 +432,8 @@ async fn sequential_aa_then_bb_two_distinct_names_accumulate() {
 
     let d3 = digest40(0xF3);
     let b3 = scan_block_fetch_stub(H0 + 2, parent, d3, vec![vec![0xA2]]);
-    let cand2 = vec![synthetic_claim_candidate("bb.nock", OWNER, 0xA2, fee_bb)];
-    apply_prefetched_scan_blocks_with_candidates(&state, vec![b3], vec![cand2])
+    let cand2 = vec![synthetic_claim("bb.nock", OWNER, 0xA2, fee_bb)];
+    apply_prefetched_scan_blocks_with_claims(&state, vec![b3], vec![cand2])
         .await
         .expect("apply block 3")
         .expect("scan outcome");
@@ -462,8 +462,8 @@ async fn sequential_nockchain_then_zzz_both_accumulate() {
 
     let d2 = digest40(0xE2);
     let b2 = scan_block_fetch_stub(H0 + 1, parent.clone(), d2.clone(), vec![vec![0x91]]);
-    let cand1 = vec![synthetic_claim_candidate("nockchain.nock", OWNER, 0x91, fee_nc)];
-    apply_prefetched_scan_blocks_with_candidates(&state, vec![b2], vec![cand1])
+    let cand1 = vec![synthetic_claim("nockchain.nock", OWNER, 0x91, fee_nc)];
+    apply_prefetched_scan_blocks_with_claims(&state, vec![b2], vec![cand1])
         .await
         .expect("apply block 2")
         .expect("scan outcome");
@@ -471,8 +471,8 @@ async fn sequential_nockchain_then_zzz_both_accumulate() {
 
     let d3 = digest40(0xE3);
     let b3 = scan_block_fetch_stub(H0 + 2, parent, d3, vec![vec![0x92]]);
-    let cand2 = vec![synthetic_claim_candidate("zzz.nock", OWNER, 0x92, fee_zzz)];
-    apply_prefetched_scan_blocks_with_candidates(&state, vec![b3], vec![cand2])
+    let cand2 = vec![synthetic_claim("zzz.nock", OWNER, 0x92, fee_zzz)];
+    apply_prefetched_scan_blocks_with_claims(&state, vec![b3], vec![cand2])
         .await
         .expect("apply block 3")
         .expect("scan outcome");
@@ -505,8 +505,8 @@ async fn sequential_nns_then_adjacent_stem_claims_both_accumulate() {
         d2.clone(),
         vec![vec![0x71], vec![0x72]],
     );
-    let cand_nns = vec![synthetic_claim_candidate("nns.nock", OWNER, 0x71, treasury_nns)];
-    apply_prefetched_scan_blocks_with_candidates(&state, vec![b2], vec![cand_nns])
+    let cand_nns = vec![synthetic_claim("nns.nock", OWNER, 0x71, treasury_nns)];
+    apply_prefetched_scan_blocks_with_claims(&state, vec![b2], vec![cand_nns])
         .await
         .expect("apply block 2")
         .expect("scan outcome");
@@ -516,8 +516,8 @@ async fn sequential_nns_then_adjacent_stem_claims_both_accumulate() {
     let b3 = scan_block_fetch_stub(H0 + 2, parent, d3, vec![vec![0x81]]);
     let second = "nna.nock";
     let fee2 = fee_for_name(second);
-    let cand_nc = vec![synthetic_claim_candidate(second, OWNER, 0x81, fee2)];
-    apply_prefetched_scan_blocks_with_candidates(&state, vec![b3], vec![cand_nc])
+    let cand_nc = vec![synthetic_claim(second, OWNER, 0x81, fee2)];
+    apply_prefetched_scan_blocks_with_claims(&state, vec![b3], vec![cand_nc])
         .await
         .expect("apply block 3")
         .expect("scan outcome");
