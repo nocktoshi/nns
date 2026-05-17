@@ -26,20 +26,6 @@ jobs:
         with:
           path: nns
 
-      - name: Checkout nockchain
-        uses: actions/checkout@v4
-        with:
-          repository: nocktoshi/nockchain
-          ref: dev
-          path: nockchain
-
-      - name: Checkout vesl-core
-        uses: actions/checkout@v4
-        with:
-          repository: nocktoshi/vesl-core
-          ref: dev
-          path: vesl-core
-
       - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -56,8 +42,7 @@ jobs:
 
       - name: Install hoonc and nockup
         run: |
-          cargo +nightly install --path ../nockchain/crates/hoonc --locked
-          cargo +nightly install --path ../nockchain/crates/nockup --locked
+          cargo +nightly install --git https://github.com/nocktoshi/nockchain.git --branch dev --locked -p hoonc -p nockup
 
       - name: Build kernel jam
         run: make install-kernel DESTDIR=$HOME/.local
