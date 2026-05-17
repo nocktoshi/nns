@@ -21,6 +21,9 @@
 /=  np  /app/nns-predicates
 /=  na  /app/nns-accumulator
 /=  tw  /app/tx-witness
+/=  tracer  /app/tracer
+/=  trcp  /app/tracer-parity
+/=  rb  /app/recursive-build
 /=  nv  /common/nock-verifier
 /=  four  /common/ztd/four
 /=  *  /common/zoon
@@ -278,286 +281,8 @@
     acc
   (insert:na acc nns-genesis-tld-name genesis-tld-entry)
 ::
-::  --- Y3 trace formulas (Nock opcodes 0–8 only) ---
-::
-::  Compile-time Hoon builds formula *nouns* for the prover (no `%9`–`%11`).
-::  Spec gates (++genesis-recursive-formula, ++transition-spec) stay full Hoon.
-::
-::  Subject axes (`:*` tuples — slot n at 2^(n+1)-2). Digests are five `@ux`
-::  Goldilocks limbs (`block-id:tw` = tx-engine-1 `digest=block-id`),
-::  never raw 40-byte atoms (STARK memory table rejects those on deep picks).
-::
-::    genesis:  [acc [height digest]]                         → 2, 3, 6
-::    empty:    prev-h page:block-id want-h want:block-id (flattened to 11 slots)
-::              → 2,6,14..126,254,510..8182
-::    full:     proof-len prev-h page acc cand block want-h want (flattened)
-::              → 2,6,14,30,62,126,254,510,1022,2046,4094,8190..131070
-::
-++  trace-pick
-  |=  axis=@
-  [0 axis]
-::
-++  trace-lit
-  |=  x=@
-  [1 x]
-::
-++  trace-eq
-  |=  [a=* b=*]
-  [5 a b]
-::
-++  trace-and
-  |=  [p=* q=*]
-  [6 p [6 q [1 0] [1 1]] [1 1]]
-::
-++  trace-nonzero
-  |=  axis=@
-  [6 (trace-eq (trace-pick axis) (trace-lit 0)) [1 1] [1 0]]
-::
-::  Nock 8: pin +(pick height-axis) at /2, then assert pick want-axis equals /2.
-::
-++  trace-eq-want-incr
-  |=  [height-axis=@ want-axis=@]
-  [8 [4 (trace-pick height-axis)] (trace-eq (trace-pick (add 4 want-axis)) [0 2])]
-::
-++  genesis-trace-formula
-  |=  genesis-height=@
-  ^-  *
-  %+  trace-and
-    (trace-nonzero 2)
-  %+  trace-and
-    (trace-eq (trace-pick 3) (trace-lit genesis-height))
-  (trace-eq (trace-pick 6) (trace-lit 0))
-::
-::  Compare five based digest limbs (page vs want) on empty-claims subject.
-::
-++  trace-eq-based-digests-empty
-  ^-  *
-  %+  trace-and
-    (trace-eq (trace-pick 6) (trace-pick 510))
-  %+  trace-and
-    (trace-eq (trace-pick 14) (trace-pick 1.022))
-  %+  trace-and
-    (trace-eq (trace-pick 30) (trace-pick 2.046))
-  %+  trace-and
-    (trace-eq (trace-pick 62) (trace-pick 4.094))
-  (trace-eq (trace-pick 126) (trace-pick 8.182))
-::
-::  Compare five based digest limbs on full transition subject.
-::
-++  trace-eq-based-digests-full
-  ^-  *
-  %+  trace-and
-    (trace-eq (trace-pick 14) (trace-pick 8.190))
-  %+  trace-and
-    (trace-eq (trace-pick 30) (trace-pick 16.382))
-  %+  trace-and
-    (trace-eq (trace-pick 62) (trace-pick 32.766))
-  %+  trace-and
-    (trace-eq (trace-pick 126) (trace-pick 65.534))
-  (trace-eq (trace-pick 254) (trace-pick 131.070))
-::
-++  transition-trace-formula-empty
-  |=  want-h=@
-  ^-  *
-  %+  trace-and
-    (trace-eq (trace-pick 254) (trace-lit want-h))
-  trace-eq-based-digests-empty
-::
-++  transition-trace-formula-full
-  |=  [prev-h=@ want-h=@]
-  ^-  *
-  %+  trace-and
-    %+  trace-and
-      (trace-nonzero 2)
-    (trace-eq (trace-pick 6) (trace-lit prev-h))
-  %+  trace-and
-    %+  trace-and
-      (trace-eq (trace-pick 4.094) (trace-lit want-h))
-    trace-eq-based-digests-full
-  ::  FWW: no cand tag (1022 = 0), or acc tag (510) differs from cand tag (1022).
-  [6 (trace-eq (trace-pick 1.022) (trace-lit 0x0)) [1 0] [6 (trace-eq (trace-pick 510) (trace-pick 1.022)) [1 1] [1 0]]]
-::
-::  The base-case recursive proof attests:
-::    - accumulator contains the genesis TLD row (`nock`)
-::    - height == nns-genesis-height
-::    - digest == genesis parent (0 for now)
-::
-::  The traced formula must avoid Nock 9–11: prove-computation:vp / fink
-::  still traps on 9 even though the host .* dry-run succeeds.  We use an
-::  explicit 0–8 tree that matches ++genesis-recursive-formula on subjects
-::  shaped [acc [height digest]] (axes 2 3 6).
-::
-
-++  genesis-recursive-formula
-  |=  [acc=nns-accumulator:na height=@ud digest=@ux]
-  ^-  ?
-  ?&  (has:na acc nns-genesis-tld-name)
-      =(height nns-genesis-height)
-      =(digest 0x0)
-  ==
-
-++  build-genesis-recursive-inputs
-  |=  [acc=nns-accumulator:na height=@ud digest=@ux]
-  ^-  [subject=* formula=*]
-  =/  sub=*  [acc [height digest]]
-  =/  form=*  (genesis-trace-formula nns-genesis-height)
-  [sub form]
-::
-++  build-transition-trace-formula-empty
-  |=  want-h=@ud
-  ^-  *
-  (transition-trace-formula-empty want-h)
-::
-::  Y3 trace subjects: typed `block-id:tw` in, flat 11- or 16-slot tuple out
-::  (trace `trace-pick` axes assume flattened limbs, not nested block-id cells).
-::
-++  y3-empty-transition-subject
-  |=  [prev-h=@ud page=block-id:tw want-h=@ud want=block-id:tw]
-  ^-  *
-  =+  [d0 d1 d2 d3 d4]=page
-  =+  [w0 w1 w2 w3 w4]=want
-  [prev-h d0 d1 d2 d3 d4 want-h w0 w1 w2 w3 w4]
-::
-++  y3-full-transition-subject
-  |=  $:  proof-len=@ud
-          prev-h=@ud
-          page=block-id:tw
-          acc-tag=@ux
-          cand-tag=@ux
-          block-proof=*
-          want-h=@ud
-          want=block-id:tw
-      ==
-  ^-  *
-  =+  [d0 d1 d2 d3 d4]=page
-  =+  [w0 w1 w2 w3 w4]=want
-  :*  proof-len
-      prev-h
-      d0
-      d1
-      d2
-      d3
-      d4
-      acc-tag
-      cand-tag
-      block-proof
-      want-h
-      w0
-      w1
-      w2
-      w3
-      w4
-  ==
-::
-++  prekey-claims
-  |=  claims=(list nns-claim:np)
-  ^-  (list transition-claim)
-  %+  turn  claims
-  |=  c=nns-claim:np
-  [(name-key:na name.c) c]
-::
-::  Flatten accumulator for transition subjects (opaque list of rows).
-::
-++  z-map-to-name-list
-  |=  acc=nns-accumulator:na
-  ^-  (list [nns-name-key:na nns-accumulator-entry:na])
-  ~(tap z-by acc)
-::
-::  First limb of a name-key (cheap @ux for trace FWW; host keeps full keys).
-::
-++  name-key-limb
-  |=  k=nns-name-key:na
-  ^-  @ux
-  =/  [k0=@ux k1=@ux k2=@ux k3=@ux k4=@ux]  k
-  k0
-::
-::  First z-map row tag from ++z-map-to-name-list output (0 if empty).
-::
-++  acc-list-head-key
-  |=  rows=(list [nns-name-key:na nns-accumulator-entry:na])
-  ^-  @ux
-  ?~  rows  0x0
-  (name-key-limb +2.i.rows)
-::
-::  --- Y3 recursive transition formula (the real per-block step) ---
-::
-::  This is the heart of Path Y3. Each invocation proves a single
-::  Nockchain block transition:
-::
-::    verify(prev_recursive_proof)
-::    verify:sp-verifier(block_proof)
-::    page.parent == last_proved_digest
-::    claim-scanner(old_acc, page, claims) == new_acc
-::    height and digest are consistent
-::
-::  The subject carries everything the formula needs to re-execute the
-::  transition inside the STARK. Once Vesl supports Nock 9/10/11, this
-::  becomes a real succinct proof that the entire history from genesis
-::  was scanned correctly.
-::
-::  Current practical note (2026-05):
-::    - verify(prev) is now a pure Nock 0-6 tree (see below).
-::    - The claim-scanner part has been reduced to a minimal first-writer-wins
-::      z-map insert that avoids the full `valid-claim` gate tree
-::      (which contains many Nock 9 calls).  This lets us produce real
-::      transition proofs today.  The full predicate bundle can be restored
-::      the moment Nock 9/10/11 support lands.
-::
-
-::  Host-side spec for the per-block transition (not traced until Nock 9/10/11).
-::
-++  prev-proof-ok-spec
-  |=  [prev-proof=* prev-height=@ud]
-  ^-  ?
-  ?&  ?=(@ prev-proof)
-      (gth (met 3 prev-proof) 0)
-      (gth prev-height 0)
-  ==
-::
-++  transition-spec
-  |=  $:  prev-proof=*
-          prev-subj=*
-          prev-form=*
-          prev-height=@ud
-          old-acc=nns-accumulator:na
-          pag=nns-page-summary:np
-          claims=(list nns-claim:np)
-          block-proof=*
-          want-height=@ud
-          want-digest=@ux
-      ==
-  ^-  ?
-  ?.  (prev-proof-ok-spec prev-proof prev-height)  %.n
-  =/  new-acc  (minimal-first-writer-wins old-acc claims want-height digest.pag)
-  ?.  =(want-height +(prev-height))  %.n
-  ?.  =(want-digest digest.pag)  %.n
-  %.y
-::
-::  Minimal first-writer-wins scanner used by the transition formula.
-::  Only checks "name not already present" and inserts if new.
-::  This deliberately skips the full Level A/B/C-A payment and format
-::  predicates (which contain many gate calls) so the formula can be
-::  traced by the current Vesl prover.
-::
-++  minimal-first-writer-wins
-  |=  $:  old-acc=nns-accumulator:na
-          claims=(list nns-claim:np)
-          height=@ud
-          digest=@ux
-      ==
-  ^-  nns-accumulator:na
-  =/  acc  old-acc
-  |-  ^-  nns-accumulator:na
-  ?~  claims  acc
-  =/  c  i.claims
-  =/  k  (name-key:na name.c)
-  =/  acc
-    ?:  (~(has z-by acc) k)
-      acc
-    =/  ent=nns-accumulator-entry:na
-      [name.c owner.c tx-hash.c height digest]
-    (~(put z-by acc) k ent)
-  $(claims t.claims)
+::  Trace formulas: /app/tracer.hoon. Spec + build: /app/recursive-build.hoon.
+::  Parity oracles: /app/tracer-parity.hoon.
 ::
 ::  Local arm that performs the subject-bundled verify of a previous
 ::  recursive proof (the same technique from the old Y0 spike, now
@@ -599,7 +324,7 @@
 ::
 ++  transition-spec-axis
   ^~
-  =/  probe  !=(transition-spec)
+  =/  probe  !=(transition-spec:rb)
   =/  inner=*
     ?.  ?=([%11 * *] probe)  probe
     +>.probe
@@ -607,106 +332,6 @@
   +<.inner
 ::
 ::  Build the subject+formula for the real per-block transition prove.
-::
-++  build-recursive-transition-inputs
-  |=  $:  prev-proof=*
-          prev-subj=*
-          prev-form=*
-          prev-height=@ud
-          old-acc=nns-accumulator:na
-          pag=nns-page-summary:np
-          claims=(list nns-claim:np)
-          block-proof=*
-          want-digest=@ux
-      ==
-  ^-  [subject=* formula=*]
-  =/  want-height=@ud  +(prev-height)
-  =/  page=block-id:tw  (from-hull-atom:block-id:tw digest.pag)
-  =/  want=block-id:tw  (from-hull-atom:block-id:tw want-digest)
-  ::  Empty claims: prev-h, page digest, want-h, want digest (flat limbs).
-  ?:  ?=(@ claims)
-    =/  sub=*  (y3-empty-transition-subject prev-height page want-height want)
-    =/  form=*  (build-transition-trace-formula-empty want-height)
-    [sub form]
-  ::  Non-empty: ≤1 claim; acc may include genesis TLD row.
-  =/  keyed=(list transition-claim)  (prekey-claims claims)
-  ?.  (lte (lent keyed) 1)
-    ~|(%recursive-transition-too-many-claims !!)
-  =/  acc-rows=(list [nns-name-key:na nns-accumulator-entry:na])
-    (z-map-to-name-list old-acc)
-  =/  acc-tag=@ux  (acc-list-head-key acc-rows)
-  =/  cand-tag=@ux
-    ?~  keyed  0x0
-    (name-key-limb key.i.keyed)
-  =/  proof-len=@ud
-    ?:  ?=(@ prev-proof)
-      (met 3 prev-proof)
-    0
-  =/  sub=*
-    %-  y3-full-transition-subject
-    :*  proof-len
-        prev-height
-        page
-        acc-tag
-        cand-tag
-        block-proof
-        want-height
-        want
-    ==
-  =/  form=*  (transition-trace-formula-full prev-height want-height)
-  [sub form]
-::
-::  Host-only: trace formula `.*` product agrees with ++transition-spec.
-::
-++  y3-transition-empty-trace-spec-parity
-  |=  [prev-height=@ud page-d=@ux old-acc=nns-accumulator:na]
-  ^-  ?
-  =/  want-h=@ud  +(prev-height)
-  =/  page=block-id:tw  (from-hull-atom:block-id:tw page-d)
-  =/  subj=*  (y3-empty-transition-subject prev-height page want-h page)
-  =/  form=*  (build-transition-trace-formula-empty want-h)
-  =/  dry-run
-    %-  mule  |.  .*(subj form)
-  ?.  ?=(%& -.dry-run)  %.n
-  ?.  ?=(%.y p.dry-run)  %.n
-  =/  pag=nns-page-summary:np  [page-d ~]
-  =/  claims=(list nns-claim:np)  ~
-  (transition-spec 0x1 0 0 prev-height old-acc pag claims 0 want-h page-d)
-::
-::  Host-only: one-claim full transition trace vs ++transition-spec.
-::
-++  y3-transition-full-trace-spec-parity
-  |=  [prev-proof=* prev-height=@ud old-acc=nns-accumulator:na pag=nns-page-summary:np claims=(list nns-claim:np)]
-  ^-  ?
-  =/  samp
-    %-  build-recursive-transition-inputs
-    :*  prev-proof
-        0
-        0
-        prev-height
-        old-acc
-        pag
-        claims
-        0
-        digest.pag
-    ==
-  =/  dry-run
-    %-  mule  |.  .*(subject.samp formula.samp)
-  ?.  ?=(%& -.dry-run)  %.n
-  ?.  ?=(%.y p.dry-run)  %.n
-  (transition-spec prev-proof 0 0 prev-height old-acc pag claims 0 +(prev-height) digest.pag)
-::
-::  Host-only: trace formula `.*` product agrees with ++genesis-recursive-formula.
-::
-++  y3-genesis-trace-spec-parity
-  |=  [acc=nns-accumulator:na height=@ud digest=@ux]
-  ^-  ?
-  =/  samp  (build-genesis-recursive-inputs acc height digest)
-  =/  dry-run
-    %-  mule  |.  .*(-.samp +.samp)
-  ?.  ?=(%& -.dry-run)  %.n
-  ?.  ?=(%.y p.dry-run)  %.n
-  (genesis-recursive-formula acc height digest)
 ::
 ::  --- domain predicates shared by %claim and nns-gate ---
 ::
@@ -827,7 +452,6 @@
   :*  (root-atom:na accumulator.state)
       last-proved-height.state
   ==
-::
 ++  moat  (keep v0-state)
 ::
 ++  inner
@@ -851,6 +475,9 @@
   ++  peek
     |=  =path
     ^-  (unit (unit *))
+    =/  parity=(unit (unit *))
+      (peek-tracer-parity:trcp path (ensure-genesis-tld accumulator.state) last-proved-height.state last-proved-digest.state nns-genesis-height)
+    ?^  parity  parity
     ?+  path  (vesl-peek vesl.state path)
         [%kernel-debug ~]
       =/  acc=(list [name=@t nns-accumulator-entry:na])
@@ -908,37 +535,6 @@
         [%fee-for-name name=@t ~]
       =/  key=@t  +<.path
       ``(fee-for-name:np key)
-        ::
-        [%y3-parity-genesis ~]
-      =/  acc=nns-accumulator:na
-        (ensure-genesis-tld accumulator.state)
-      ``(y3-genesis-trace-spec-parity acc nns-genesis-height 0x0)
-        ::
-        [%y3-parity-transition-empty ~]
-      =/  acc=nns-accumulator:na
-        (ensure-genesis-tld accumulator.state)
-      =/  prev-h=@ud
-        ?:  (gth last-proved-height.state 0)
-          last-proved-height.state
-        nns-genesis-height
-      =/  page-d=@ux
-        ?:  (gth last-proved-height.state 0)
-          last-proved-digest.state
-        0x1
-      ``(y3-transition-empty-trace-spec-parity prev-h page-d acc)
-        ::
-        [%y3-parity-transition-full ~]
-      =/  acc=nns-accumulator:na
-        (ensure-genesis-tld accumulator.state)
-      =/  prev-h=@ud  nns-genesis-height
-      =/  page-d=@ux  0x1
-      =/  pag=nns-page-summary:np  [page-d ~]
-      =/  wit=nns-raw-tx-witness:np  [0x1 0x1 0 '']
-      =/  claims=(list nns-claim:np)
-        :~  ['nockchain.nock' 'o' 0 0x1 wit]
-        ==
-      ``(y3-transition-full-trace-spec-parity 0x1 prev-h acc pag claims)
-        ::
     ==
   ::
   ++  poke
@@ -961,10 +557,10 @@
       ?.  ?|(boot =(parent.c last-proved-digest.state))
         :_  state
         ~[[%scan-block-error 'parent-mismatch']]
-      ?:  boot
-        :_  state
-        =.  accumulator.state  (ensure-genesis-tld accumulator.state)
-        ~
+      =.  accumulator.state
+        ?:  boot
+          (ensure-genesis-tld accumulator.state)
+        accumulator.state
       =/  want-height=@ud
         ?:  boot
           (max +(last-proved-height.state) nns-genesis-height)
@@ -1296,7 +892,7 @@
       ::  height/digest with that accumulator. No prior proof is verified.
       =.  accumulator.state  (ensure-genesis-tld accumulator.state)
       =/  [subj=* form=*]
-        (build-genesis-recursive-inputs accumulator.state nns-genesis-height 0x0)
+        (build-genesis-recursive-inputs:rb accumulator.state nns-genesis-height 0x0)
       =/  dry-run
         %-  mule  |.  .*(subj form)
       ?.  ?=(%& -.dry-run)
@@ -1376,7 +972,7 @@
           last-proved-height.state
         nns-genesis-height
       =/  [subj=* form=*]
-        %-  build-recursive-transition-inputs
+        %-  build-recursive-transition-inputs:rb
         :*  prev-proof
             prev-subj
             prev-form

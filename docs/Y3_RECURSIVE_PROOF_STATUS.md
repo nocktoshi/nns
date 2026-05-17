@@ -42,6 +42,20 @@ Because the upstream Vesl prover (`fock:fink:interpret` in `common/ztd/eight.hoo
 
 ## 3. Where the Code Lives (as of the last successful kernel build)
 
+### Hoon — trace layer (`tracer.hoon`, `tracer-parity.hoon`, `recursive-build.hoon`)
+
+Hand-transpiled Nock 0–8 trace formulas and declarative `++compile-trace` live in **`hoon/app/tracer.hoon`**. Host spec (`++transition-spec`, `++genesis-recursive-formula`, builders) is in **`hoon/app/recursive-build.hoon`**. Trace-vs-spec parity oracles and peek dispatch are in **`hoon/app/tracer-parity.hoon`**, imported from **`hoon/app/app.hoon`** as `/= trcp /app/tracer-parity` (not `par` — that name collides with `++par` from `/= * /common/zoon`).
+
+Parity peek paths (Rust `build_parity_trace_*_peek` in `src/kernel.rs`):
+
+| Path | Arm |
+|------|-----|
+| `/parity-trace-genesis` | `++parity-genesis-trace` |
+| `/parity-trace-transition-empty` | `++parity-transition-empty` |
+| `/parity-trace-transition-full` | `++parity-transition-full` |
+
+Integration test: `cargo +nightly test trace_formula_spec_parity_peeks` in `tests/prover.rs`.
+
 ### Hoon — `hoon/app/app.hoon`
 
 - **Types** (around line 478):
@@ -107,6 +121,7 @@ Because the upstream Vesl prover (`fock:fink:interpret` in `common/ztd/eight.hoo
 - `RecursiveTransitionProof` + `first_recursive_transition_proof`
 - `build_recursive_proof_peek` + `decode_recursive_proof`
 - The genesis equivalents (`build_prove_recursive_genesis_poke`, etc.)
+- Parity trace peeks: `build_parity_trace_genesis_peek`, `build_parity_trace_transition_empty_peek`, `build_parity_trace_transition_full_peek`, `decode_parity_trace_bool`
 
 ### Rust — `src/chain_follower.rs`
 

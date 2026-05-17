@@ -30,6 +30,8 @@
 +|  %hash-types
 ::  Mirrors `/common/tx-engine-0` `++hash` (re-exported as `++hash` / `++block-id`
 ::  in `/common/tx-engine-1`). Five Goldilocks belts — STARK-safe on deep axis picks.
+::  Flattened into trace subjects in `/app/tracer.hoon` (`++empty-transition-subject`,
+::  `++full-transition-subject`; see `++based:hash:tw` and `++compile-trace`).
 ::
 ++  hash
   =<  form

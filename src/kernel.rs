@@ -1257,31 +1257,31 @@ pub fn build_recursive_proof_peek() -> NounSlab {
     single_tag_peek("recursive-proof")
 }
 
-/// `/y3-parity-genesis ~` — `.*` on the combinator genesis trace formula
-/// matches `++genesis-recursive-formula` on the canned genesis subject.
-pub fn build_y3_parity_genesis_peek() -> NounSlab {
-    single_tag_peek("y3-parity-genesis")
+/// `/parity-trace-genesis ~` — `.*` on the genesis trace formula matches
+/// `++genesis-recursive-formula` on the canned genesis subject.
+pub fn build_parity_trace_genesis_peek() -> NounSlab {
+    single_tag_peek("parity-trace-genesis")
 }
 
-/// `/y3-parity-transition-empty ~` — empty-claim transition trace vs
-/// `++transition-spec` on a canned 4-tuple subject.
-pub fn build_y3_parity_transition_empty_peek() -> NounSlab {
-    single_tag_peek("y3-parity-transition-empty")
+/// `/parity-trace-transition-empty ~` — empty-claim transition trace vs
+/// `++transition-spec` on a canned flat subject.
+pub fn build_parity_trace_transition_empty_peek() -> NounSlab {
+    single_tag_peek("parity-trace-transition-empty")
 }
 
-/// `/y3-parity-transition-full ~` — one-claim full transition trace vs
-/// `++transition-spec` on the slim 8-tuple subject (no embedded prev-proof JAM).
-pub fn build_y3_parity_transition_full_peek() -> NounSlab {
-    single_tag_peek("y3-parity-transition-full")
+/// `/parity-trace-transition-full ~` — one-claim full transition trace vs
+/// `++transition-spec` on the slim full subject (no embedded prev-proof JAM).
+pub fn build_parity_trace_transition_full_peek() -> NounSlab {
+    single_tag_peek("parity-trace-transition-full")
 }
 
-/// Decode a Y3 parity peek (`%.y` / `%.n` as 0/1 atom).
-pub fn decode_y3_parity_bool(result: &NounSlab) -> Result<bool, String> {
+/// Decode a tracer parity peek (`%.y` / `%.n` as 0/1 atom).
+pub fn decode_parity_trace_bool(result: &NounSlab) -> Result<bool, String> {
     let inner_slab = peek_unwrap_some(result)?;
     let inner = ScopedNoun::from_slab(&inner_slab);
     let v = inner
         .as_u64()
-        .map_err(|_| "y3-parity peek: expected loobean atom".to_string())?;
+        .map_err(|_| "parity-trace peek: expected loobean atom".to_string())?;
     Ok(v != 0)
 }
 

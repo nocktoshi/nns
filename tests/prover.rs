@@ -26,9 +26,9 @@ use nns_vesl::kernel::{
     build_prove_identity_poke, build_prove_recursive_genesis_poke,
     build_prove_recursive_transition_poke,
     build_recursive_proof_peek, build_verify_stark_poke, decode_recursive_proof,
-    build_y3_parity_genesis_peek, build_y3_parity_transition_empty_peek,
-    build_y3_parity_transition_full_peek,
-    decode_y3_parity_bool,
+    build_parity_trace_genesis_peek, build_parity_trace_transition_empty_peek,
+    build_parity_trace_transition_full_peek,
+    decode_parity_trace_bool,
     first_genesis_recursive_dry_run_ok, first_recursive_transition_dry_run_ok,
     first_recursive_transition_proof, decode_prove_failure,
     first_arbitrary_proof, first_claim_in_stark_proof,
@@ -53,45 +53,45 @@ const ADDR1: &str = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJ";
 /// Vesl `prove-computation:vp` only traces Nock 0–8; reject formulas that
 /// embed `%9`–`%11` at any cell head (see Y3 plan).
 /// Combinator-built trace formulas must agree with host `++*-spec` gates on
-/// canned subjects (`/y3-parity-*` peeks run `.*` + spec in Hoon).
+/// canned subjects (`/parity-trace-*` peeks run `.*` + spec in Hoon).
 #[tokio::test]
-async fn y3_trace_formula_spec_parity_peeks() {
+async fn trace_formula_spec_parity_peeks() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let cli = boot::default_boot_cli(true);
     let mut app: NockApp = boot::setup(
         &kernel_jam(),
         cli,
         &[],
-        "nns-vesl-y3-parity",
+        "nns-vesl-tracer-parity",
         Some(tmp.path().to_path_buf()),
     )
     .await
     .expect("kernel boot");
 
     let genesis = app
-        .peek(build_y3_parity_genesis_peek())
+        .peek(build_parity_trace_genesis_peek())
         .await
-        .expect("y3-parity-genesis peek");
+        .expect("parity-trace-genesis peek");
     assert!(
-        decode_y3_parity_bool(&genesis).expect("decode genesis parity"),
+        decode_parity_trace_bool(&genesis).expect("decode genesis parity"),
         "genesis trace formula .* must match ++genesis-recursive-formula on canned subject"
     );
 
     let empty = app
-        .peek(build_y3_parity_transition_empty_peek())
+        .peek(build_parity_trace_transition_empty_peek())
         .await
-        .expect("y3-parity-transition-empty peek");
+        .expect("parity-trace-transition-empty peek");
     assert!(
-        decode_y3_parity_bool(&empty).expect("decode empty-transition parity"),
+        decode_parity_trace_bool(&empty).expect("decode empty-transition parity"),
         "empty-claims transition trace .* must match ++transition-spec on canned subject"
     );
 
     let full = app
-        .peek(build_y3_parity_transition_full_peek())
+        .peek(build_parity_trace_transition_full_peek())
         .await
-        .expect("y3-parity-transition-full peek");
+        .expect("parity-trace-transition-full peek");
     assert!(
-        decode_y3_parity_bool(&full).expect("decode full-transition parity"),
+        decode_parity_trace_bool(&full).expect("decode full-transition parity"),
         "one-cand transition trace .* must match ++transition-spec on slim subject"
     );
 }
