@@ -2,7 +2,11 @@
 ::
 ::  Duplicates the *hashing* shape of `page:tx-engine-1` / `z-set` walks
 ::  from `nockchain/hoon/common/tx-engine-{0,1}.hoon` without importing the
-::  full tx-engine cone (see `scripts/setup-hoon-tree.sh`).
+::  full tx-engine cone (see `nns-predicates.hoon` and `scripts/setup-hoon-tree.sh`).
+::
+::  Type layout matches tx-engine-1 exactly:
+::    ++  hash      hash:v0       ::  [@ux @ux @ux @ux @ux]
+::    ++  block-id  block-id:v0   ::  alias of hash (page digest)
 ::
 ::  Included today:
 ::    - `++block-commitment` — same field order as `+hashable-block-commitment`
@@ -12,18 +16,81 @@
 ::      the chain jams.
 ::    - `++has-tx-in-ids` — `~(has z-in …)` over a `(z-set tx-id)`.
 ::
-::  Intentional non-goals:
-::    - Do not vendor `++spends` / `++outputs` or rebuild transaction
-::      outputs here. Nockchain already executes and validates
-::      transactions; NNS should not duplicate that state transition.
-::    - Only add more helpers when they bind commitments or membership
-::      (for example, hashing an already-provided raw transaction to a
-::      tx-id, if the recursive proof needs that binding).
-::
+/=  *  /common/zeke
 /=  *  /common/zoon
 |%
-+$  hash  [@ux @ux @ux @ux @ux]
-+$  tx-id  hash
++|  %digest-atom
+++  pad-digest-atom-40
+  |=  d=@
+  ^-  @
+  ?:  (gte (met 3 d) 40)
+    d
+  (rap 3 (weld (rip 3 d) (reap (sub 40 (met 3 d)) 0)))
+::
++|  %hash-types
+::  Mirrors `/common/tx-engine-0` `++hash` (re-exported as `++hash` / `++block-id`
+::  in `/common/tx-engine-1`). Five Goldilocks belts — STARK-safe on deep axis picks.
+::
+++  hash
+  =<  form
+  |%
+  ++  form
+    $+  noun-digest
+    [@ux @ux @ux @ux @ux]
+  ::
+  ++  based
+    |=  has=form
+    ^-  ?
+    =+  [a=@ b=@ c=@ d=@ e=@]=has
+    ?&  (^based a)
+        (^based b)
+        (^based c)
+        (^based d)
+        (^based e)
+    ==
+  ::
+  ++  to-list
+    |=  bid=form
+    ^-  (list @ux)
+    =+  [a=@ux b=@ux c=@ux d=@ux e=@ux]=bid
+    ~[a b c d e]
+  ::
+  ::  Coerce a hull `@ux` page digest into `+$hash`. Accepts an existing five-tuple
+  ::  or a raw atom (40-byte LE from gRPC / `hash_to_atom_bytes`, or minimal genesis
+  ::  `0` padded to 40 bytes — same semantics as Rust `five_limbs`).
+  ++  from-hull-atom
+    |=  d=*
+    ^-  form
+    ?^  d
+      ?>  ?=([@ux @ux @ux @ux @ux] d)
+      d
+    ^-  form
+    =/  buf=@  (pad-digest-atom-40 d)
+    :*  `@ux`(cut 3 [0 8] buf)
+        `@ux`(cut 3 [8 8] buf)
+        `@ux`(cut 3 [16 8] buf)
+        `@ux`(cut 3 [24 8] buf)
+        `@ux`(cut 3 [32 8] buf)
+    ==
+  --
+::
+::  Page / block digest (tx-engine-1: `digest=block-id` on `+$page`).
+::
+++  block-id
+  =<  form
+  |%
+  ++  form  hash
+  ++  based  based:hash
+  ++  from-hull-atom  from-hull-atom:hash
+  --
+::
+++  tx-id
+  =<  form
+  |%
+  ++  form  hash
+  ++  from-hull-atom  from-hull-atom:hash
+  --
+::
 +$  coins  @ud
 +$  page-number  @ud
 ::

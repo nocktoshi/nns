@@ -20,6 +20,7 @@
 /+  vv=vesl-verifier
 /=  np  /app/nns-predicates
 /=  na  /app/nns-accumulator
+/=  tw  /app/tx-witness
 /=  nv  /common/nock-verifier
 /=  four  /common/ztd/four
 /=  *  /common/zoon
@@ -282,12 +283,15 @@
 ::  Compile-time Hoon builds formula *nouns* for the prover (no `%9`–`%11`).
 ::  Spec gates (++genesis-recursive-formula, ++transition-spec) stay full Hoon.
 ::
-::  Subject axes (`:*` tuples — slot n at 2^(n+1)-2):
+::  Subject axes (`:*` tuples — slot n at 2^(n+1)-2). Digests are five `@ux`
+::  Goldilocks limbs (`block-id:tw` = tx-engine-1 `digest=block-id`),
+::  never raw 40-byte atoms (STARK memory table rejects those on deep picks).
+::
 ::    genesis:  [acc [height digest]]                         → 2, 3, 6
-::    empty:    [prev-h page-d want-h page-d]                 → 2, 6, 14, 30
-::    full:     proof-len prev-h digest acc-tag cand-tag block want-h want-d
-::              → 2, 6, 14, 30, 62, 126, 254, 510
-::              (digest + tags = first @ux limb — STARK memory rejects 40-byte atoms)
+::    empty:    prev-h page:block-id want-h want:block-id (flattened to 11 slots)
+::              → 2,6,14..126,254,510..8182
+::    full:     proof-len prev-h page acc cand block want-h want (flattened)
+::              → 2,6,14,30,62,126,254,510,1022,2046,4094,8190..131070
 ::
 ++  trace-pick
   |=  axis=@
@@ -324,12 +328,40 @@
     (trace-eq (trace-pick 3) (trace-lit genesis-height))
   (trace-eq (trace-pick 6) (trace-lit 0))
 ::
-++  transition-trace-formula-empty
-  |=  [want-h=@ page-d=@ux]
+::  Compare five based digest limbs (page vs want) on empty-claims subject.
+::
+++  trace-eq-based-digests-empty
   ^-  *
   %+  trace-and
-    (trace-eq-want-incr 2 14)
-  (trace-eq (trace-pick 6) (trace-pick 30))
+    (trace-eq (trace-pick 6) (trace-pick 510))
+  %+  trace-and
+    (trace-eq (trace-pick 14) (trace-pick 1.022))
+  %+  trace-and
+    (trace-eq (trace-pick 30) (trace-pick 2.046))
+  %+  trace-and
+    (trace-eq (trace-pick 62) (trace-pick 4.094))
+  (trace-eq (trace-pick 126) (trace-pick 8.182))
+::
+::  Compare five based digest limbs on full transition subject.
+::
+++  trace-eq-based-digests-full
+  ^-  *
+  %+  trace-and
+    (trace-eq (trace-pick 14) (trace-pick 8.190))
+  %+  trace-and
+    (trace-eq (trace-pick 30) (trace-pick 16.382))
+  %+  trace-and
+    (trace-eq (trace-pick 62) (trace-pick 32.766))
+  %+  trace-and
+    (trace-eq (trace-pick 126) (trace-pick 65.534))
+  (trace-eq (trace-pick 254) (trace-pick 131.070))
+::
+++  transition-trace-formula-empty
+  |=  want-h=@
+  ^-  *
+  %+  trace-and
+    (trace-eq (trace-pick 254) (trace-lit want-h))
+  trace-eq-based-digests-empty
 ::
 ++  transition-trace-formula-full
   |=  [prev-h=@ want-h=@]
@@ -340,10 +372,10 @@
     (trace-eq (trace-pick 6) (trace-lit prev-h))
   %+  trace-and
     %+  trace-and
-      (trace-eq (trace-pick 254) (trace-lit want-h))
-    (trace-eq (trace-pick 510) (trace-pick 14))
-  ::  FWW: no cand tag (62 = 0), or acc tag (30) differs from cand tag (62).
-  [6 (trace-eq (trace-pick 62) (trace-lit 0x0)) [1 0] [6 (trace-eq (trace-pick 30) (trace-pick 62)) [1 1] [1 0]]]
+      (trace-eq (trace-pick 4.094) (trace-lit want-h))
+    trace-eq-based-digests-full
+  ::  FWW: no cand tag (1022 = 0), or acc tag (510) differs from cand tag (1022).
+  [6 (trace-eq (trace-pick 1.022) (trace-lit 0x0)) [1 0] [6 (trace-eq (trace-pick 510) (trace-pick 1.022)) [1 1] [1 0]]]
 ::
 ::  The base-case recursive proof attests:
 ::    - accumulator contains the genesis TLD row (`nock`)
@@ -372,9 +404,50 @@
   [sub form]
 ::
 ++  build-transition-trace-formula-empty
-  |=  [want-h=@ page-d=@ux]
+  |=  want-h=@ud
   ^-  *
-  (transition-trace-formula-empty want-h page-d)
+  (transition-trace-formula-empty want-h)
+::
+::  Y3 trace subjects: typed `block-id:tw` in, flat 11- or 16-slot tuple out
+::  (trace `trace-pick` axes assume flattened limbs, not nested block-id cells).
+::
+++  y3-empty-transition-subject
+  |=  [prev-h=@ud page=block-id:tw want-h=@ud want=block-id:tw]
+  ^-  *
+  =+  [d0 d1 d2 d3 d4]=page
+  =+  [w0 w1 w2 w3 w4]=want
+  [prev-h d0 d1 d2 d3 d4 want-h w0 w1 w2 w3 w4]
+::
+++  y3-full-transition-subject
+  |=  $:  proof-len=@ud
+          prev-h=@ud
+          page=block-id:tw
+          acc-tag=@ux
+          cand-tag=@ux
+          block-proof=*
+          want-h=@ud
+          want=block-id:tw
+      ==
+  ^-  *
+  =+  [d0 d1 d2 d3 d4]=page
+  =+  [w0 w1 w2 w3 w4]=want
+  :*  proof-len
+      prev-h
+      d0
+      d1
+      d2
+      d3
+      d4
+      acc-tag
+      cand-tag
+      block-proof
+      want-h
+      w0
+      w1
+      w2
+      w3
+      w4
+  ==
 ::
 ++  prekey-claims
   |=  claims=(list nns-claim:np)
@@ -397,15 +470,6 @@
   ^-  @ux
   =/  [k0=@ux k1=@ux k2=@ux k3=@ux k4=@ux]  k
   k0
-::
-::  First 8 bytes of a digest atom for trace subjects (full Tip5 may be 40B).
-::
-++  digest-limb
-  |=  d=@
-  ^-  @ux
-  ?:  (lte (met 3 d) 8)
-    ;;(@ux d)
-  (cut 3 [0 8] d)
 ::
 ::  First z-map row tag from ++z-map-to-name-list output (0 if empty).
 ::
@@ -557,11 +621,12 @@
       ==
   ^-  [subject=* formula=*]
   =/  want-height=@ud  +(prev-height)
-  =/  page-d=@ux  (digest-limb digest.pag)
-  ::  Empty claims: 4-tuple subject (height/digest only).
+  =/  page=block-id:tw  (from-hull-atom:block-id:tw digest.pag)
+  =/  want=block-id:tw  (from-hull-atom:block-id:tw want-digest)
+  ::  Empty claims: prev-h, page digest, want-h, want digest (flat limbs).
   ?:  ?=(@ claims)
-    =/  sub=*  [prev-height page-d want-height page-d]
-    =/  form=*  (build-transition-trace-formula-empty want-height page-d)
+    =/  sub=*  (y3-empty-transition-subject prev-height page want-height want)
+    =/  form=*  (build-transition-trace-formula-empty want-height)
     [sub form]
   ::  Non-empty: ≤1 claim; acc may include genesis TLD row.
   =/  keyed=(list transition-claim)  (prekey-claims claims)
@@ -577,16 +642,16 @@
     ?:  ?=(@ prev-proof)
       (met 3 prev-proof)
     0
-  =/  dig=@ux  (digest-limb digest.pag)
   =/  sub=*
+    %-  y3-full-transition-subject
     :*  proof-len
         prev-height
-        dig
+        page
         acc-tag
         cand-tag
         block-proof
         want-height
-        (digest-limb want-digest)
+        want
     ==
   =/  form=*  (transition-trace-formula-full prev-height want-height)
   [sub form]
@@ -597,8 +662,9 @@
   |=  [prev-height=@ud page-d=@ux old-acc=nns-accumulator:na]
   ^-  ?
   =/  want-h=@ud  +(prev-height)
-  =/  subj=*  [prev-height page-d want-h page-d]
-  =/  form=*  (build-transition-trace-formula-empty want-h page-d)
+  =/  page=block-id:tw  (from-hull-atom:block-id:tw page-d)
+  =/  subj=*  (y3-empty-transition-subject prev-height page want-h page)
+  =/  form=*  (build-transition-trace-formula-empty want-h)
   =/  dry-run
     %-  mule  |.  .*(subj form)
   ?.  ?=(%& -.dry-run)  %.n
