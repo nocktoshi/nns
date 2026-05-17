@@ -1130,7 +1130,7 @@ pub fn first_genesis_recursive_proof(effects: &[NounSlab]) -> Option<Vec<u8>> {
     effects.iter().find_map(genesis_recursive_proof)
 }
 
-/// `ok` from `[%genesis-recursive-dry-run-ok ok=?]`.
+/// `ok` from `[%genesis-recursive-dry-run-ok ok=?]` (Hoon loobean: `%.y` = 0).
 pub fn genesis_recursive_dry_run_ok(effect: &NounSlab) -> Option<bool> {
     if effect_tag(effect)? != "genesis-recursive-dry-run-ok" {
         return None;
@@ -1138,7 +1138,7 @@ pub fn genesis_recursive_dry_run_ok(effect: &NounSlab) -> Option<bool> {
     let sn = ScopedNoun::from_slab(effect);
     let ok_n = sn.tail().ok()?;
     let ok = ok_n.as_u64().ok()?;
-    Some(ok != 0)
+    Some(ok == 0)
 }
 
 pub fn first_genesis_recursive_dry_run_ok(effects: &[NounSlab]) -> Option<bool> {
@@ -1167,6 +1167,7 @@ pub fn first_recursive_transition_proof(effects: &[NounSlab]) -> Option<Recursiv
 }
 
 
+/// `ok` from `[%recursive-transition-dry-run-ok ok=?]` (Hoon loobean: `%.y` = 0).
 pub fn recursive_transition_dry_run_ok(effect: &NounSlab) -> Option<bool> {
     if effect_tag(effect)? != "recursive-transition-dry-run-ok" {
         return None;
@@ -1174,7 +1175,7 @@ pub fn recursive_transition_dry_run_ok(effect: &NounSlab) -> Option<bool> {
     let sn = ScopedNoun::from_slab(effect);
     let ok_n = sn.tail().ok()?;
     let ok = ok_n.as_u64().ok()?;
-    Some(ok != 0)
+    Some(ok == 0)
 }
 
 pub fn first_recursive_transition_dry_run_ok(effects: &[NounSlab]) -> Option<bool> {

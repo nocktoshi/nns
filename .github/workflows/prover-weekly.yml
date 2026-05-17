@@ -1,0 +1,63 @@
+# Long-running STARK prover integration tests (`#[ignore]` in tests/prover.rs).
+name: Prover (weekly)
+
+on:
+  schedule:
+  # Sunday 06:00 UTC
+    - cron: "0 6 * * 0"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  TRACY_NO_INVARIANT_CHECK: "1"
+  NNS_KERNEL_JAM: ${{ github.workspace }}/nns-vesl/nns.jam
+
+jobs:
+  prover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    defaults:
+      run:
+        working-directory: nns-vesl
+
+    steps:
+      - name: Checkout nns-vesl
+        uses: actions/checkout@v4
+        with:
+          path: nns-vesl
+
+      - name: Checkout nockchain
+        uses: actions/checkout@v4
+        with:
+          repository: nocktoshi/nockchain
+          ref: ea5f831635f32acdd55e9ea60890e012dcd1b13f
+          path: nockchain
+
+      - name: Checkout vesl-core
+        uses: actions/checkout@v4
+        with:
+          repository: nocktoshi/vesl-core
+          ref: dc9382cd2110cb39561bf4abdc47d7d7f88029b5
+          path: vesl-core
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: nns-vesl
+          cache-on-failure: true
+
+      - name: Install hoonc and nockup
+        run: |
+          cargo +nightly install --path ../nockchain/crates/hoonc --locked
+          cargo +nightly install --path ../nockchain/crates/nockup --locked
+
+      - name: Build kernel jam
+        run: make install-kernel DESTDIR=$HOME/.local
+
+      - name: Prover tests (ignored)
+        run: cargo +nightly test --test prover -- --ignored --nocapture

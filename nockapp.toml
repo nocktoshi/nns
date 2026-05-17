@@ -4,8 +4,8 @@ version = "0.1.0"
 description = "NNS - The Nockchain Name Service"
 
 [dependencies.nockchain-hoon]
-git = "https://github.com/nockchain/nockchain.git"
-commit = "ff6dd2d64661f6607485feb9373cf705db86edce"
+git = "https://github.com/nocktoshi/nockchain.git"
+commit = "ea5f831635f32acdd55e9ea60890e012dcd1b13f"
 path = "hoon"
 
 [dependencies.vesl-lib]
