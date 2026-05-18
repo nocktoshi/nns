@@ -28,6 +28,15 @@ pub enum RegistrationStatus {
     Registered,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ClaimLifecycleStatus {
+    Submitted,
+    Confirmed,
+    Finalized,
+    Rejected,
+}
+
 /// Request body for `POST /register`.
 #[derive(Debug, Deserialize)]
 pub struct RegisterRequest {
@@ -42,6 +51,8 @@ pub struct RegisterRequest {
 pub struct ClaimRequest {
     pub address: String,
     pub name: String,
+    #[serde(rename = "txHash", default)]
+    pub tx_hash: Option<String>,
 }
 
 /// Request body for `POST /primary`: designate `name` as the
@@ -55,9 +66,26 @@ pub struct SetPrimaryRequest {
 
 /// `POST /claim` success body.
 #[derive(Debug, Serialize)]
-pub struct ClaimResponse {
+pub struct ClaimSubmissionResponse {
     pub message: String,
-    pub registration: Registration,
+    pub claim_id: String,
+    pub status: ClaimLifecycleStatus,
+    #[serde(rename = "txHash", skip_serializing_if = "Option::is_none")]
+    pub tx_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registration: Option<Registration>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaimStatusResponse {
+    pub claim_id: String,
+    pub status: ClaimLifecycleStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registration: Option<Registration>,
+    #[serde(rename = "txHash", skip_serializing_if = "Option::is_none")]
+    pub tx_hash: Option<String>,
 }
 
 /// `POST /primary` success body.
@@ -82,6 +110,7 @@ pub struct SearchByAddressResponse {
 /// `GET /search?name=...` result. The legacy worker returns
 /// `{name, price, status, owner?, registeredAt?}` and status is
 /// one of `registered | pending | available`.
+/// `price` is denominated in whole NOCK (`65536` nicks = `1` NOCK on chain).
 #[derive(Debug, Serialize)]
 pub struct SearchByNameResponse {
     pub name: String,
@@ -127,6 +156,8 @@ pub struct SettleResponse {
     pub root: String,
     /// `hash-leaf(jam sorted-batch)` — batch-level replay key.
     pub note_id: String,
+    #[serde(rename = "settlementTx", skip_serializing_if = "Option::is_none")]
+    pub settlement_tx: Option<String>,
 }
 
 /// One sibling node in a Merkle inclusion proof.
@@ -138,14 +169,14 @@ pub struct SettleResponse {
 ///
 ///   - `"left"`  (Hoon `%.y`): compute `hash-pair(sibling, cur)`
 ///   - `"right"` (Hoon `%.n`): compute `hash-pair(cur, sibling)`
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProofNodeView {
     /// Hex-encoded little-endian sibling hash bytes.
     pub hash: String,
     pub side: ProofSide,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProofSide {
     Left,
@@ -171,7 +202,7 @@ pub enum ProofSide {
 /// current `root` — not that `txHash` is unique in history (kernel
 /// `tx-hashes` set, trusted) nor that the root is a deterministic
 /// result of honest claims (see README "Proof scope").
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProofResponse {
     pub name: String,
     pub owner: String,
@@ -184,6 +215,126 @@ pub struct ProofResponse {
     pub hull: String,
     /// Sibling chain from leaf to root, leaf-first.
     pub proof: Vec<ProofNodeView>,
+    /// Transition-proof anchor metadata for light clients. The
+    /// transition proof bytes are surfaced separately as an opaque
+    /// hex payload when available.
+    pub transition: TransitionProofMetadata,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transition_proof: Option<String>,
+    /// **Phase 7**: the follower-advanced Nockchain tip at the
+    /// moment this proof was generated. Wallets use this together
+    /// with their own view of the canonical chain tip to reject
+    /// stale proofs:
+    ///
+    /// ```text
+    /// anchor.tip_height >= wallet_chain_tip_height - max_staleness
+    /// ```
+    ///
+    /// Default `max_staleness = 20` blocks. Without this check a
+    /// malicious server could freeze its follower and hand-poke
+    /// stale state into a cryptographically valid proof. See
+    /// `ARCHITECTURE.md` §7 for the full attack analysis.
+    ///
+    /// Optional for backwards compat — older NNS servers omit it.
+    /// New light clients SHOULD require it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<ProofAnchor>,
+}
+
+/// Follower-advanced anchor snapshot carried in `ProofResponse`.
+/// Phase 7 — see [`ProofResponse::anchor`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofAnchor {
+    /// Hex-encoded 40-byte Tip5 digest of the tip block. Wallets
+    /// cross-reference this against their own canonical-chain view
+    /// at `tip_height` to detect fork attacks.
+    pub tip_digest: String,
+    /// Nockchain height of the tip block. Freshness rule compares
+    /// against the wallet's canonical tip height.
+    pub tip_height: u64,
+}
+
+/// `GET /debug/kernel-state` body (`NNS_DEBUG_HTTP=1`).
+#[derive(Debug, Clone, Serialize)]
+pub struct KernelDebugResponse {
+    pub version: u64,
+    pub last_proved_height: u64,
+    pub last_proved_digest_hex: String,
+    pub accumulator_root_hex: String,
+    pub accumulator_size: u64,
+    pub names: Vec<KernelDebugNameEntry>,
+    pub vesl: KernelDebugVesl,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_proved: Option<KernelDebugLastProved>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KernelDebugNameEntry {
+    pub name: String,
+    pub owner: String,
+    pub tx_hash_hex: String,
+    pub claim_height: u64,
+    pub block_digest_hex: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KernelDebugVesl {
+    pub registered: Vec<KernelDebugVeslRegistered>,
+    pub settled_note_ids_hex: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KernelDebugVeslRegistered {
+    pub hull_id_hex: String,
+    pub merkle_root_hex: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct KernelDebugLastProved {
+    pub subject_jam_hex: String,
+    pub formula_jam_hex: String,
+}
+
+/// `GET /accumulator/:name` Path Y lookup response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccumulatorLookupResponse {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<AccumulatorValueResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proof_axis: Option<String>,
+    /// Present when `?wallet_export=1` — hex-encoded `jam(accumulator)` for offline
+    /// `light_verify` (`accumulator_snapshot_jam_hex`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accumulator_snapshot_hex: Option<String>,
+    /// Y3+: hex-encoded JAM of the latest recursive rollup proof (PathY4LookupBundle.recursive_proof_hex).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recursive_proof_hex: Option<String>,
+    /// Y3+: JAM of the traced subject for the recursive_proof (pair with formula).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recursive_subject_jam_hex: Option<String>,
+    /// Y3+: JAM of the traced formula for the recursive_proof.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recursive_formula_jam_hex: Option<String>,
+    pub last_proved_height: u64,
+    pub last_proved_digest: String,
+    pub accumulator_root: String,
+    pub accumulator_size: u64,
+}
+
+/// One Path Y accumulator value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccumulatorValueResponse {
+    pub owner: String,
+    pub tx_hash: String,
+    pub claim_height: u64,
+    pub block_digest: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransitionProofMetadata {
+    pub mode: String,
+    pub settled_claim_id: u64,
 }
 
 /// `GET /pending-batch` success body.

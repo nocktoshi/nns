@@ -1,203 +1,165 @@
-//! Hull application state.
+//! Hull application state for the Path Y scanner.
 //!
-//! Split of authority:
-//!
-//!   - The **kernel** is the authoritative registry. It holds
-//!     `names=(map @t [owner tx-hash])`, `tx-hashes=(set @t)`, and
-//!     `primaries=(map @t @t)` (owner -> primary name). `%claim`
-//!     enforces name- and payment-uniqueness and auto-assigns a
-//!     primary on first claim; `%set-primary` enforces owner-gated
-//!     primary updates.
-//!
-//!   - The **hull mirror** is a denormalized read cache for the
-//!     HTTP API: pending reservations (which never hit the kernel)
-//!     plus a reverse `address -> primary name` index so
-//!     `/resolve?address=` is an O(1) lookup.
-//!
-//! One address can own many names. The `names` field carries every
-//! registration (and is scanned for `/search?address=`); the
-//! `primaries` field is the single reverse-lookup target. The mirror
-//! only writes `primaries` in response to a `%primary-set` effect
-//! from the kernel — never via blind "last write wins" on insert.
-//!
-//! The mirror is an in-memory cache persisted as JSON after every
-//! mutation. It is rebuildable from the kernel (for registered
-//! entries) plus nothing (for pending), so deleting the mirror only
-//! loses pending reservations. Payment-replay protection lives in
-//! the kernel's `tx-hashes` set, not here — there is no hull-side
-//! used-tx-hash cache to get out of sync.
+//! The Hoon kernel owns the accumulator and scan cursor. The Rust hull keeps
+//! only runtime configuration and follower telemetry around the shared
+//! `NockApp`.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use nockapp::NockApp;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::sync::Mutex;
 
-use crate::types::{Registration, RegistrationStatus};
-
-pub const MIRROR_FILE: &str = ".nns-mirror.json";
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Mirror {
-    /// name -> registration. Source of truth for GET handlers that
-    /// list everything (`/verified`, `/pending`) or look a name up
-    /// directly (`/resolve?name=`, `/search?name=`).
-    pub names: HashMap<String, Registration>,
-    /// address -> primary name. One entry per owner; always the
-    /// designated reverse-lookup target. Populated from kernel
-    /// `%primary-set` effects only — never from blind inserts —
-    /// so it does not drift when one address owns many names.
-    #[serde(alias = "addresses")]
-    pub primaries: HashMap<String, String>,
-    /// Latest commitment snapshot reported by the kernel (via
-    /// `%claim-id-bumped` effects on `%claim`). Cached so `/status`
-    /// and `/snapshot` can answer without a peek and so clients
-    /// can correlate a claim response with the settlement hull.
-    /// `None` until the first successful `%claim`.
-    #[serde(default)]
-    pub snapshot: Option<SnapshotView>,
-    /// Highest `claim-id` whose batch has been successfully settled.
-    /// Advanced from `%batch-settled` effects on `POST /settle`.
-    /// `0` means "nothing settled yet"; this is also the kernel's
-    /// default, so a fresh mirror is consistent with a fresh kernel.
-    #[serde(default)]
-    pub last_settled_claim_id: u64,
-}
-
-/// JSON-friendly view of the kernel's current commitment snapshot.
-/// `hull` and `root` are the raw atom bytes the kernel emitted,
-/// hex-encoded for transport.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SnapshotView {
-    pub claim_id: u64,
-    /// Hex-encoded hull-id (little-endian atom bytes).
-    pub hull: String,
-    /// Hex-encoded Merkle root (little-endian atom bytes).
-    pub root: String,
-}
-
-impl Mirror {
-    pub fn load(dir: &Path) -> Self {
-        let path = dir.join(MIRROR_FILE);
-        match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
-            Err(_) => Mirror::default(),
-        }
-    }
-
-    pub fn save(&self, dir: &Path) -> std::io::Result<()> {
-        let path = dir.join(MIRROR_FILE);
-        let tmp = dir.join(format!("{MIRROR_FILE}.tmp"));
-        let bytes = serde_json::to_vec_pretty(self).unwrap();
-        std::fs::write(&tmp, bytes)?;
-        std::fs::rename(tmp, path)
-    }
-
-    /// Insert / replace a name row. Does **not** touch `primaries`
-    /// — that index is driven by kernel `%primary-set` effects via
-    /// [`Mirror::set_primary`], not by per-row writes. Multiple
-    /// names for the same address coexist naturally here.
-    pub fn insert(&mut self, reg: Registration) {
-        self.names.insert(reg.name.clone(), reg);
-    }
-
-    /// Record that `address` wants reverse-lookup to resolve to
-    /// `name`. Called in response to a kernel `%primary-set` effect
-    /// (from either a first `%claim` or an explicit `%set-primary`).
-    pub fn set_primary(&mut self, address: String, name: String) {
-        self.primaries.insert(address, name);
-    }
-
-    /// Record a new commitment snapshot reported by the kernel via
-    /// `%claim-id-bumped`. Overwrites the previous snapshot — the
-    /// authoritative history lives in the graft state, not here.
-    pub fn set_snapshot(&mut self, claim_id: u64, hull: &[u8], root: &[u8]) {
-        self.snapshot = Some(SnapshotView {
-            claim_id,
-            hull: hex_encode(hull),
-            root: hex_encode(root),
-        });
-    }
-
-    /// Record the kernel's new `last-settled-claim-id` after a
-    /// successful `%settle-batch`. Monotonic: only moves forward.
-    pub fn set_last_settled_claim_id(&mut self, claim_id: u64) {
-        if claim_id > self.last_settled_claim_id {
-            self.last_settled_claim_id = claim_id;
-        }
-    }
-
-    pub fn by_status(&self, status: RegistrationStatus) -> Vec<Registration> {
-        let mut v: Vec<Registration> = self
-            .names
-            .values()
-            .filter(|r| r.status == status)
-            .cloned()
-            .collect();
-        v.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-        v
-    }
-}
-
-/// Shared hull state passed into every handler.
-pub struct AppState {
-    pub app: NockApp,
-    pub mirror: Mirror,
+/// Hull-side state: settlement config and follower telemetry. **Lock
+/// ordering:** never acquire [`AppState::hull`] while holding
+/// [`AppState::kernel`].
+pub struct HullState {
     pub output_dir: PathBuf,
     pub settlement: vesl_core::SettlementConfig,
+    /// First block height to `%scan-block` after a genesis cursor; mirrors
+    /// [`crate::chain::NNS_GENESIS_HEIGHT`] (same value as `++nns-genesis-height` in Hoon).
+    pub nns_genesis_height: u64,
+    pub follower: FollowerObservability,
 }
 
-pub type SharedState = Arc<Mutex<AppState>>;
+/// **Phase 7.1 — Operator observability.** Runtime follower
+/// telemetry exposed through `/status` so operators can answer "is the
+/// follower stuck?" with a single HTTP call.
+///
+/// Not persisted. Resets on process restart — which is the right
+/// behaviour, because staleness of a "last scan batch at T" timestamp
+/// across restarts would be misleading. The authoritative scan cursor
+/// lives in kernel state; this only tracks what the follower process
+/// observed during its lifetime.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct FollowerObservability {
+    /// Most recent chain-tip height the follower learned from the
+    /// chain endpoint. `None` in local mode (no endpoint) or before
+    /// the first successful `fetch_current_tip_height`.
+    pub last_chain_tip_height: Option<u64>,
+    /// Epoch-millis timestamp of [`last_chain_tip_height`].
+    pub last_chain_tip_observed_at_epoch_ms: Option<u64>,
+    /// Epoch-millis timestamp of the most recent successful `%scan-block`
+    /// batch recorded by the follower. `None` until the first such batch
+    /// completes.
+    pub last_advance_at_epoch_ms: Option<u64>,
+    /// Scan cursor height after that batch (`last-proved-height` in the kernel).
+    pub last_advance_tip_height: Option<u64>,
+    /// Number of blocks applied in that batch.
+    pub last_advance_count: Option<u64>,
+    /// Most recent follower-tick failure message. Cleared on the
+    /// next successful tick so stale errors don't confuse operators.
+    pub last_error: Option<String>,
+    /// Epoch-millis timestamp of [`last_error`].
+    pub last_error_at_epoch_ms: Option<u64>,
+    /// Which follower phase the last error came from. One of
+    /// `"scan_block"`, `"scan_peek"`, `"plan"`, or `"scan_poke"`.
+    /// Strongly typed as a static string so log aggregators can
+    /// histogram on it.
+    pub last_error_phase: Option<&'static str>,
+}
+
+impl FollowerObservability {
+    pub fn record_advance(&mut self, tip_height: u64, count: u64, now_ms: u64) {
+        self.last_advance_at_epoch_ms = Some(now_ms);
+        self.last_advance_tip_height = Some(tip_height);
+        self.last_advance_count = Some(count);
+        self.last_error = None;
+        self.last_error_at_epoch_ms = None;
+        self.last_error_phase = None;
+    }
+
+    pub fn record_chain_tip(&mut self, tip: u64, now_ms: u64) {
+        self.last_chain_tip_height = Some(tip);
+        self.last_chain_tip_observed_at_epoch_ms = Some(now_ms);
+    }
+
+    pub fn record_error(&mut self, phase: &'static str, err: String, now_ms: u64) {
+        self.last_error = Some(err);
+        self.last_error_at_epoch_ms = Some(now_ms);
+        self.last_error_phase = Some(phase);
+    }
+}
+
+/// Shared hull + kernel state. The kernel mutex serializes all Nock I/O;
+/// the hull mutex covers settlement config and follower telemetry.
+pub struct AppState {
+    pub kernel: Mutex<NockApp>,
+    pub hull: Mutex<HullState>,
+    /// Count of successful follower `%scan-block` steps since the last
+    /// on-disk kernel checkpoint (used to batch `save_blocking`).
+    follower_scans_since_checkpoint: AtomicU64,
+}
+
+pub type SharedState = Arc<AppState>;
 
 impl AppState {
-    pub fn new(
-        app: NockApp,
-        output_dir: PathBuf,
-        settlement: vesl_core::SettlementConfig,
-    ) -> Self {
-        let mirror = Mirror::load(&output_dir);
+    pub fn new(app: NockApp, output_dir: PathBuf, settlement: vesl_core::SettlementConfig) -> Self {
         Self {
-            app,
-            mirror,
-            output_dir,
-            settlement,
+            kernel: Mutex::new(app),
+            hull: Mutex::new(HullState {
+                output_dir,
+                settlement,
+                nns_genesis_height: crate::chain::NNS_GENESIS_HEIGHT.max(1),
+                follower: FollowerObservability::default(),
+            }),
+            follower_scans_since_checkpoint: AtomicU64::new(0),
         }
     }
 
-    /// Mirror-only flush. Cheap (~JSON write) and safe to call on
-    /// every mutation. Use for register-handler pending inserts where
-    /// the kernel is untouched, so we don't pay a checkpoint cost per
-    /// pending reservation.
-    pub fn persist(&self) {
-        if let Err(e) = self.mirror.save(&self.output_dir) {
-            tracing::error!("failed to persist mirror: {e}");
-        }
+    /// Current monotonic-ish timestamp for telemetry. Wall-clock
+    /// `SystemTime` is fine here because we use it for human-readable
+    /// "last advanced N seconds ago" math, not anything requiring
+    /// strict ordering. Falls back to `0` if the system clock is
+    /// before 1970 (shouldn't happen, but don't panic the follower).
+    pub fn now_epoch_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
     }
 
-    /// Full flush: force a kernel checkpoint then save the mirror.
-    /// Use after every successful kernel poke so the on-disk state
-    /// matches the in-memory state even if the process dies before
-    /// the next periodic save would have fired. Errors are logged
-    /// but do not fail the caller — we prefer returning the HTTP
-    /// response to losing the mutation because of a transient disk
-    /// issue. The mirror write still happens even if the kernel save
-    /// fails, so `/status` and `/resolve` stay consistent with what
-    /// the handler already told the client.
-    ///
-    /// Note: `NockApp::save_blocking` expects the nockapp's internal
-    /// task machinery to be alive, which it is as long as we hold
-    /// the mutex guard on `self`. This is the *only* place we write
-    /// kernel checkpoints — the nockapp's periodic save tick never
-    /// runs because we don't drive `app.run()`.
-    pub async fn persist_all(&mut self) {
-        if let Err(e) = self.app.save_blocking().await {
-            tracing::error!("failed to save kernel checkpoint: {e:?}");
+    /// Full flush hook on shutdown. Current `nockapp` persists checkpoints
+    /// inside the serf loop during normal pokes; there is no public
+    /// `save_blocking` API to call from the hull.
+    pub async fn persist_all(&self) {
+        tracing::debug!("persist_all: nockapp checkpoints during kernel pokes (no explicit flush API)");
+    }
+
+    /// Batched persist stride hook after follower `%scan-block`. Checkpoints
+    /// are written by `nockapp` during pokes; this only tracks scan count for
+    /// observability when `NNS_FOLLOWER_PERSIST_EVERY` is set.
+    pub async fn maybe_persist_after_follower_scan(&self) {
+        let stride = follower_persist_stride_blocks();
+        let prev = self
+            .follower_scans_since_checkpoint
+            .fetch_add(1, Ordering::Relaxed);
+        let n = prev + 1;
+        if stride > 1 && n < stride {
+            tracing::trace!(
+                n,
+                stride,
+                "follower: batched persist stride (checkpoints handled by nockapp during pokes)"
+            );
+            return;
         }
-        if let Err(e) = self.mirror.save(&self.output_dir) {
-            tracing::error!("failed to persist mirror: {e}");
-        }
+        self.follower_scans_since_checkpoint
+            .store(0, Ordering::Relaxed);
+        tracing::trace!("follower: persist stride reached (nockapp serf checkpoints on poke)");
+    }
+}
+
+/// Blocks between on-disk kernel checkpoints during follower catch-up.
+/// `1` = same as checkpointing every block (legacy behaviour).
+fn follower_persist_stride_blocks() -> u64 {
+    match std::env::var("NNS_FOLLOWER_PERSIST_EVERY") {
+        Ok(s) => match s.parse::<u64>() {
+            Ok(n) if n >= 1 => n,
+            _ => 1000,
+        },
+        Err(_) => 1000,
     }
 }
 

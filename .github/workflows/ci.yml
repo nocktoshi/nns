@@ -1,0 +1,73 @@
+# Fast test suite on every push and pull request.
+# Prover-heavy tests live in prover-weekly.yml (ignored by default).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  TRACY_NO_INVARIANT_CHECK: "1"
+  NNS_KERNEL_JAM: ${{ github.workspace }}/nns/nns.jam
+  # ubuntu-latest (~7 GiB RAM) cannot mmap Large (~32 GiB). boot_stack_size() also checks CI=true.
+  NNS_NOCK_STACK_SIZE: normal
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: nns
+
+    steps:
+      - name: Checkout nns
+        uses: actions/checkout@v4
+        with:
+          path: nns
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: nns
+          cache-on-failure: true
+
+      - name: Cache Hoon kernel
+        uses: actions/cache@v4
+        with:
+          path: |
+            nns/nns.jam
+            nns/.cache
+            nns/hoon/packages
+          key: kernel-${{ hashFiles('nns/nockapp.toml', 'nns/hoon/app/**') }}
+          restore-keys: |
+            kernel-
+
+      - name: Install hoonc and nockup
+        run: |
+          cargo +nightly install --git https://github.com/nocktoshi/nockchain.git --branch dev --locked hoonc
+          cargo +nightly install --git https://github.com/nocktoshi/nockchain.git --branch dev --locked nockup
+
+      - name: Build kernel jam
+        run: make install-kernel DESTDIR=$HOME/.local
+
+      - name: Hoon compile-time tests
+        run: hoonc --new --arbitrary hoon/tests/names.hoon hoon/
+
+      - name: Rust tests (fast)
+        env:
+          NNS_NOCK_STACK_SIZE: small
+        run: cargo +nightly test
