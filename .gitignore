@@ -1,4 +1,12 @@
 target/
+.cache/
 .nns-data/
 .DS_Store
-out.jam
+nns.jam
+
+# Hoon libraries (managed by nockup)
+/hoon/packages/
+/hoon/common/
+/hoon/dat/
+/hoon/jams/
+/hoon/lib/

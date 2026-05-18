@@ -1,30 +1,29 @@
 [package]
-name = "nns-vesl"
-version = "0.1.0"
+name = "nns"
+version = "0.1.2"
 edition = "2021"
 
 [[bin]]
-name = "nns-vesl"
+name = "nns"
 path = "src/main.rs"
 
 [lib]
-name = "nns_vesl"
+name = "nns"
 path = "src/lib.rs"
 
 [dependencies]
-# NockVM — sibling clone at ~/nockchain
-nockapp = { path = "../nockchain/crates/nockapp", default-features = false }
-nockvm = { path = "../nockchain/crates/nockvm/rust/nockvm" }
-nockvm_macros = { path = "../nockchain/crates/nockvm/rust/nockvm_macros" }
-nockapp-grpc = { path = "../nockchain/crates/nockapp-grpc" }
-# STARK prover hot state — required to produce real proofs from nns-gate.
-zkvm-jetpack = { path = "../nockchain/crates/zkvm-jetpack" }
-
-# Vesl SDK — sibling clone at ~/vesl
-vesl-core = { path = "../vesl-core/crates/vesl-core" }
-nock-noun-rs = { path = "../vesl-core/crates/nock-noun-rs" }
-nockchain-tip5-rs = { path = "../vesl-core/crates/nockchain-tip5-rs" }
-nockchain-client-rs = { path = "../vesl-core/crates/nockchain-client-rs" }
+nockapp = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev", default-features = false, features = ["slog-tracing"] }
+nockvm = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
+nockvm_macros = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
+nockapp-grpc = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
+nockchain-types = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
+nockchain-math = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
+noun-serde = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
+zkvm-jetpack = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
+vesl-core = { git = "https://github.com/nocktoshi/vesl-core.git", branch = "dev" }
+nock-noun-rs = { git = "https://github.com/nocktoshi/vesl-core.git", branch = "dev" }
+nockchain-tip5-rs = { git = "https://github.com/nocktoshi/vesl-core.git", branch = "dev" }
+nockchain-client-rs = { git = "https://github.com/nocktoshi/vesl-core.git", branch = "dev" }
 
 tokio = { version = "1.32", features = ["rt-multi-thread", "macros", "sync", "signal"] }
 tonic = { version = "0.14", features = ["tls-webpki-roots"] }
@@ -44,3 +43,15 @@ uuid = { version = "1.6", features = ["v4"] }
 tokio = { version = "1.32", features = ["rt-multi-thread", "macros", "test-util"] }
 tower = { version = "0.4", features = ["util"] }
 tempfile = "3"
+base64 = "0.22"
+
+# vesl-core path deps → nockchain; route through the same dev branch.
+[patch."https://github.com/nocktoshi/vesl-core.git"]
+nockapp = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
+nockvm = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
+nockvm_macros = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
+nockapp-grpc = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
+nockchain-types = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
+nockchain-math = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
+noun-serde = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
+ibig = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev", package = "ibig" }

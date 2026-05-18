@@ -1,23 +1,33 @@
-//! nns-vesl hull binary.
+//! nns hull binary.
 
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use nns_vesl::{api, state::AppState};
+use nns::{api, state::AppState};
 use nockapp::kernel::boot;
 use nockapp::NockApp;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if nns::handle_early_cli() {
+        return Ok(());
+    }
+
+    nns::apply_nns_config();
+
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
-    let cli = boot::default_boot_cli(false);
+    let mut cli = boot::default_boot_cli(false);
+    // Match integration tests: prover hot state + `%scan-block` Tip5 paths
+    // use more Nock stack than the default CLI `Normal` size.
+    cli.stack_size = nns::boot_stack_size();
     boot::init_default_tracing(&cli);
 
-    // --- Load settlement + NNS config from vesl.toml ---
-    let toml_path = std::env::var("VESL_TOML").unwrap_or_else(|_| "vesl.toml".into());
+    // --- Load settlement + NNS config from nns.toml ---
+    let toml_path = std::env::var("NNS_CONFIG").unwrap_or_else(|_| "nns.toml".into());
     let toml_cfg = load_toml(&PathBuf::from(&toml_path));
+    let settlement_toml = toml_cfg.settlement_toml();
     let settlement = vesl_core::SettlementConfig::resolve(
         None,  // cli_mode
         None,  // cli_chain_endpoint
@@ -26,14 +36,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None,  // cli_coinbase_timelock_min
         None,  // cli_accept_timeout
         None,  // cli_seed_phrase
-        &toml_cfg, None, // default_signing_key (unused for local)
+        &settlement_toml,
+        None, // default_signing_key (unused for local)
     );
 
-    println!("=== nns-vesl ===");
+    println!("=== nns ===");
     println!("  settlement mode: {}", settlement.mode);
+    println!(
+        "  nns genesis height (protocol): {}",
+        nns::chain::NNS_GENESIS_HEIGHT
+    );
 
     // --- Boot the kernel ---
-    let kernel_path = std::env::var("NNS_KERNEL_JAM").unwrap_or_else(|_| "out.jam".into());
+    let kernel_path = std::env::var("NNS_KERNEL_JAM").unwrap_or_else(|_| "nns.jam".into());
     let kernel = fs::read(&kernel_path)
         .map_err(|e| format!("failed to read kernel jam {kernel_path}: {e}"))?;
 
@@ -50,8 +65,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state_dir = data_parent.join(".nns-data");
     fs::create_dir_all(&state_dir)?;
 
-    // Install the STARK prover hot state so the kernel's `%prove-batch`
-    // cause can produce real STARK artifacts. This is a no-op when the
+    // Install the STARK prover hot state so `%prove-arbitrary` /
+    // `%prove-claim-in-stark` can produce real STARK artifacts. No-op when
     // kernel never calls `prove-computation`, so it is safe to always
     // install; pokes that only touch %claim / %set-primary pay nothing
     // for the extra jets beyond module load time.
@@ -70,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  state dir: {}", state_dir.display());
 
     let state = Arc::new(AppState::new(app, state_dir, settlement));
-    let _follower = nns_vesl::chain_follower::spawn(state.clone());
+    let _follower = nns::chain_follower::spawn(state.clone());
 
     // --- Start HTTP server ---
     let port: u16 = std::env::var("API_PORT")
@@ -84,13 +99,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // periodic save tick and save-on-exit paths never fire. We
     // compensate in two places:
     //
-    //   1. Every handler that pokes calls `AppState::persist_all`
-    //      to force a kernel checkpoint + mirror write inline.
-    //   2. Here — race `api::serve` against SIGINT/SIGTERM and
-    //      flush once more on shutdown. This covers the case where
-    //      a save between handlers raced with the signal, and
-    //      guarantees the on-disk state matches the last committed
-    //      poke even if the signal lands mid-millisecond.
+    //   1. HTTP handlers that poke call `AppState::persist_all` inline.
+    //      The chain follower uses `maybe_persist_after_follower_scan`
+    //      instead (batched full checkpoints — see `NNS_FOLLOWER_PERSIST_EVERY`).
+    //   2. Here — race `api::serve` against SIGINT/SIGTERM and flush
+    //      once more on shutdown so any follower batches since the last
+    //      checkpoint are written before exit.
     //
     // Errors from the final flush are logged but swallowed: the
     // signal already committed us to exiting, and any prior
@@ -148,10 +162,21 @@ struct Raw {
     tx_fee: Option<u64>,
     coinbase_timelock_min: Option<u64>,
     accept_timeout_secs: Option<u64>,
-    payment_address: Option<String>,
 }
 
-fn load_toml(path: &std::path::Path) -> vesl_core::SettlementToml {
+impl Raw {
+    fn settlement_toml(&self) -> vesl_core::SettlementToml {
+        vesl_core::SettlementToml {
+            settlement_mode: self.settlement_mode.clone(),
+            chain_endpoint: self.chain_endpoint.clone(),
+            tx_fee: self.tx_fee,
+            coinbase_timelock_min: self.coinbase_timelock_min,
+            accept_timeout_secs: self.accept_timeout_secs,
+        }
+    }
+}
+
+fn load_toml(path: &std::path::Path) -> Raw {
     let raw: Raw = match std::fs::read_to_string(path) {
         Ok(contents) => toml::from_str(&contents).unwrap_or_else(|e| {
             eprintln!("warning: failed to parse {}: {e}", path.display());
@@ -159,11 +184,5 @@ fn load_toml(path: &std::path::Path) -> vesl_core::SettlementToml {
         }),
         Err(_) => Raw::default(),
     };
-    return vesl_core::SettlementToml {
-        settlement_mode: raw.settlement_mode,
-        chain_endpoint: raw.chain_endpoint,
-        tx_fee: raw.tx_fee,
-        coinbase_timelock_min: raw.coinbase_timelock_min,
-        accept_timeout_secs: raw.accept_timeout_secs,
-    };
+    raw
 }

@@ -1,0 +1,71 @@
+[package]
+name = "."
+version = "0.1.2"
+description = "NNS - The Nockchain Name Service"
+
+[dependencies.nockchain-common]
+git = "https://github.com/nocktoshi/nockchain.git"
+commit = "f1c7cd87883bd7883d06a898361884d1cb18f98e"
+path = "hoon/common"
+install_path = "hoon/common"
+files = [
+  "zeke",
+  "wrapper",
+  "zoon",
+  "zose",
+  "nock-verifier",
+  "stark/prover",
+  "stark/verifier",
+  "v0-v1/nock-common",
+  "v2/nock-common",
+  "v0-v1/table/compute",
+  "v0-v1/table/memory",
+  "v0-v1/table/prover/compute",
+  "v0-v1/table/prover/memory",
+  "v0-v1/table/verifier/compute",
+  "v0-v1/table/verifier/memory",
+  "v2/table/compute",
+  "v2/table/memory",
+  "v2/table/prover/compute",
+  "v2/table/prover/memory",
+  "v2/table/verifier/compute",
+  "v2/table/verifier/memory",
+  "ztd/one",
+  "ztd/two",
+  "ztd/three",
+  "ztd/four",
+  "ztd/five",
+  "ztd/six",
+  "ztd/seven",
+  "ztd/eight",
+]
+
+[dependencies.nockchain-dat]
+git = "https://github.com/nocktoshi/nockchain.git"
+commit = "f1c7cd87883bd7883d06a898361884d1cb18f98e"
+path = "hoon/dat"
+install_path = "hoon/dat"
+files = [
+  "softed-constraints",
+  "constraints-v0-v1",
+  "constraints-v2",
+]
+
+[dependencies.nockchain-jams]
+git = "https://github.com/nocktoshi/nockchain.git"
+commit = "f1c7cd87883bd7883d06a898361884d1cb18f98e"
+path = "hoon/jams"
+install_path = "hoon/jams"
+
+[dependencies.vesl-lib]
+git = "https://github.com/nocktoshi/vesl-core.git"
+commit = "556f707db7f896a032fba4fee87387f8e6e101d7"
+path = "protocol/lib"
+install_path = "hoon/lib"
+files = [
+  "vesl-graft",
+  "vesl-merkle",
+  "vesl-prover",
+  "vesl-stark-verifier",
+  "vesl-verifier",
+]

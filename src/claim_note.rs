@@ -1,240 +1,177 @@
+//! NNS claim note decoding for **NoteData on v1 outputs** (Path Y scanner).
+//! See `docs/claim-note-wallet-support.md` and [nockchain#116](https://github.com/nockchain/nockchain/pull/116).
+//!
+//! Claims use the canonical **`blob`** note-data key. The on-wire value is **wallet-packed**
+//! (JAM of belt list → inner bytes); see [`crate::packed_blob`]. The inner payload is either
+//! JAM of `[name owner tx_hash]` (cord triple) or a UTF-8 **claim path** `nns/v1/claim/<name>.nock`
+//! (owner / tx id inferred by the follower from the enclosing tx and signers).
+//!
+//! **No optional “chain bundle” in note-data:** the hull does not trust extra attachments for
+//! raw-tx, page, proofs, or headers — it **re-fetches** the paying tx and block context from
+//! Nockchain RPC and runs predicates (`chain_follower`, kernel) on that canonical view.
 use nock_noun_rs::{cue_from_bytes, jam_to_bytes, make_cord, new_stack, T};
-use nockchain_client_rs::{
-    find_opaque_bytes_entry, jam_opaque_bytes_entry, jam_u64_entry, NoteData,
-};
+use nockchain_client_rs::{find_entry, find_opaque_bytes_entry, NoteData};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
-pub const CLAIM_NOTE_KEY: &str = "nns/v1/claim";
-pub const CLAIM_NOTE_VERSION_KEY: &str = "nns/v1/claim-version";
-pub const CLAIM_NOTE_ID_KEY: &str = "nns/v1/claim-id";
+use crate::noun_access::ScopedNoun;
 
-/// Phase 2d — optional chain-bundle keys. A claim-note with any of
-/// these is a "post-Phase-2" note carrying the on-chain evidence the
-/// recursive `nns-gate` circuit will consume in Phase 3. Claim-notes
-/// without them are treated as legacy (accepted in local mode,
-/// rejected by a strict Phase 3 circuit).
-pub const CLAIM_NOTE_RAW_TX_KEY: &str = "nns/v1/raw-tx";
-pub const CLAIM_NOTE_PAGE_KEY: &str = "nns/v1/page";
-pub const CLAIM_NOTE_BLOCK_PROOF_KEY: &str = "nns/v1/block-proof";
-pub const CLAIM_NOTE_HEADER_CHAIN_KEY: &str = "nns/v1/header-chain";
+/// Programmatic claim payload (`wallet-tx-builder` / gRPC `NoteDataEntry.key`).
+pub const CLAIM_NOTE_BLOB_ENTRY_KEY: &str = "blob";
 
-/// Chain-bundle payload attached to a claim note. Each field is
-/// opaque jammed bytes — the decoder lives in Phase 3's gate, not
-/// here. Kept out of the core `ClaimNoteV1` struct so local-mode
-/// callers don't need to synthesize anything.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ClaimChainBundle {
-    /// JAM'd `raw-tx:t` noun of the claim's paying tx.
-    #[serde(default)]
-    pub raw_tx_jam: Option<Vec<u8>>,
-    /// JAM'd `page:t` noun of the block that included the paying tx.
-    #[serde(default)]
-    pub page_jam: Option<Vec<u8>>,
-    /// JAM'd `proof:sp` — the block's PoW STARK.
-    #[serde(default)]
-    pub block_proof_jam: Option<Vec<u8>>,
-    /// JAM'd list of `page-header` from `page`'s block up to the
-    /// follower-anchored tip.
-    #[serde(default)]
-    pub header_chain_jam: Option<Vec<u8>>,
-}
+/// On-chain `nns/v1/claim` txs may use a **path-shaped** inner payload (UTF-8) instead of a JAM
+/// triple; the hull fills `tx_hash` from the enclosing tx id and `owner` from spenders.
+pub const CLAIM_NOTE_PATH_PREFIX: &str = "nns/v1/claim/";
 
-impl ClaimChainBundle {
-    /// True when the bundle carries every field the Phase 3 circuit
-    /// needs. A local-mode claim (or a legacy chain claim) will be
-    /// `false`; the follower is expected to reject those in
-    /// non-degraded non-local mode.
-    pub fn is_complete(&self) -> bool {
-        self.raw_tx_jam.is_some()
-            && self.page_jam.is_some()
-            && self.block_proof_jam.is_some()
-            && self.header_chain_jam.is_some()
+/// If `bytes` is a UTF-8 claim path (`nns/v1/claim/<stem>.nock`), returns the `<stem>.nock` name.
+pub fn claim_name_from_path_inner(bytes: &[u8]) -> Option<String> {
+    let s = std::str::from_utf8(bytes).ok()?.trim_end_matches('\0');
+    if !s.starts_with(CLAIM_NOTE_PATH_PREFIX) || !s.ends_with(".nock") {
+        return None;
     }
+    let name = s[CLAIM_NOTE_PATH_PREFIX.len()..].to_string();
+    if name.is_empty() {
+        return None;
+    }
+    Some(name)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ClaimNoteV1 {
-    pub version: u64,
-    pub claim_id: String,
     pub name: String,
     pub owner: String,
     pub tx_hash: String,
-    /// Phase 2d: optional on-chain evidence for the Phase 3 circuit.
-    /// Empty / all-`None` for legacy & local-mode notes.
-    #[serde(default)]
-    pub chain_bundle: ClaimChainBundle,
 }
 
 impl ClaimNoteV1 {
     pub fn new(name: String, owner: String, tx_hash: String) -> Self {
         Self {
-            version: 1,
-            claim_id: Uuid::new_v4().to_string(),
             name,
             owner,
             tx_hash,
-            chain_bundle: ClaimChainBundle::default(),
         }
     }
 
-    /// Attach a chain bundle (moving the struct fluent-style). Used
-    /// by the Phase 4 `/claim` handler to enrich a note before chain
-    /// submission.
-    pub fn with_chain_bundle(mut self, bundle: ClaimChainBundle) -> Self {
-        self.chain_bundle = bundle;
-        self
-    }
-
-    /// Canonical jam payload for the claim tuple.
+    /// Canonical jam payload for the claim triple `[name owner tx_hash]`.
     pub fn jam_tuple(&self) -> Vec<u8> {
         let mut stack = new_stack();
         let n = make_cord(&mut stack, &self.name);
         let o = make_cord(&mut stack, &self.owner);
         let tx = make_cord(&mut stack, &self.tx_hash);
         let noun = T(&mut stack, &[n, o, tx]);
-        jam_to_bytes(&mut stack, noun)
+        jam_to_bytes(noun, &stack.noun_space())
     }
 
-    /// Encode this claim note as NoteData entries for a NoteV1 output.
+    /// Decode **`blob`** only. Chain evidence is **not** read from note-data; the follower
+    /// loads `TransactionDetails` and block metadata from RPC and validates in the kernel.
     ///
-    /// Legacy `nns/v1/claim-*` entries are always emitted. Phase 2d
-    /// chain-bundle keys are emitted only when present — absent keys
-    /// are indistinguishable from a legacy note on the wire so
-    /// downstream readers can stay backward-compatible.
-    pub fn to_note_data(&self) -> NoteData {
-        let mut entries = vec![
-            jam_u64_entry(CLAIM_NOTE_VERSION_KEY, self.version),
-            jam_opaque_bytes_entry(CLAIM_NOTE_ID_KEY, self.claim_id.as_bytes()),
-            jam_opaque_bytes_entry(CLAIM_NOTE_KEY, &self.jam_tuple()),
-        ];
-        if let Some(bytes) = self.chain_bundle.raw_tx_jam.as_ref() {
-            entries.push(jam_opaque_bytes_entry(CLAIM_NOTE_RAW_TX_KEY, bytes));
-        }
-        if let Some(bytes) = self.chain_bundle.page_jam.as_ref() {
-            entries.push(jam_opaque_bytes_entry(CLAIM_NOTE_PAGE_KEY, bytes));
-        }
-        if let Some(bytes) = self.chain_bundle.block_proof_jam.as_ref() {
-            entries.push(jam_opaque_bytes_entry(CLAIM_NOTE_BLOCK_PROOF_KEY, bytes));
-        }
-        if let Some(bytes) = self.chain_bundle.header_chain_jam.as_ref() {
-            entries.push(jam_opaque_bytes_entry(CLAIM_NOTE_HEADER_CHAIN_KEY, bytes));
-        }
-        NoteData::new(entries)
-    }
-
-    /// Decode a chain note-data payload back into a claim note.
-    ///
-    /// Missing chain-bundle keys surface as `None` on the respective
-    /// `ClaimChainBundle` fields — callers that require them (e.g.
-    /// strict Phase 3 follower) must check `chain_bundle.is_complete`.
+    /// Tries the jammed-opaque encoding first (`jam_opaque_bytes_entry` round-trip). If that
+    /// fails, falls back to **raw wallet-packed wire** in `NoteDataEntry.blob` (as returned by
+    /// some `GetTransactionDetails` builds / grpcurl samples).
     pub fn from_note_data(note_data: &NoteData) -> Result<Self, String> {
-        let version = nockchain_client_rs::find_u64_entry(note_data, CLAIM_NOTE_VERSION_KEY)
-            .map_err(|e| format!("missing claim version: {e}"))?;
-        if version != 1 {
-            return Err(format!("unsupported claim version: {version}"));
+        let wire = match find_opaque_bytes_entry(note_data, CLAIM_NOTE_BLOB_ENTRY_KEY) {
+            Ok(w) => w,
+            Err(_) => find_entry(note_data, CLAIM_NOTE_BLOB_ENTRY_KEY)
+                .map_err(|e| format!("missing {CLAIM_NOTE_BLOB_ENTRY_KEY} note-data entry: {e}"))?
+                .blob
+                .to_vec(),
+        };
+        Self::from_wallet_packed_blob_wire(&wire)
+    }
+
+    /// Decode a **wallet-packed** claim `blob` wire (inner path after `GetTransactionDetails`
+    /// exposes raw `bytes` for the entry, i.e. **not** jam-of-atom wrapped). Used by tests and
+    /// tooling that mirror gRPC `NoteDataEntry.blob` verbatim.
+    pub fn from_wallet_packed_blob_wire(wire: &[u8]) -> Result<Self, String> {
+        let tuple_jam = match crate::packed_blob::unpack_wallet_blob_jam(wire) {
+            Ok(inner) => inner,
+            Err(_) => wire.to_vec(),
+        };
+
+        if let Some(name) = claim_name_from_path_inner(&tuple_jam) {
+            return Ok(Self {
+                name,
+                owner: String::new(),
+                tx_hash: String::new(),
+            });
         }
-        let claim_id_bytes = find_opaque_bytes_entry(note_data, CLAIM_NOTE_ID_KEY)
-            .map_err(|e| format!("missing claim id: {e}"))?;
-        let claim_id =
-            String::from_utf8(claim_id_bytes).map_err(|e| format!("claim id is not utf8: {e}"))?;
-        let tuple_jam = find_opaque_bytes_entry(note_data, CLAIM_NOTE_KEY)
-            .map_err(|e| format!("missing claim tuple: {e}"))?;
+
         let mut stack = new_stack();
         let tuple = cue_from_bytes(&mut stack, &tuple_jam)
             .ok_or_else(|| "failed to decode claim tuple".to_string())?;
-        let c1 = tuple
-            .as_cell()
+        let root = ScopedNoun::from_stack(&stack, tuple);
+        let (name_sn, rest) = root
+            .uncons()
             .map_err(|_| "claim tuple malformed (slot 1)".to_string())?;
-        let name = c1.head();
-        let c2 = c1
-            .tail()
-            .as_cell()
+        let (owner_sn, tx_hash_sn) = rest
+            .uncons()
             .map_err(|_| "claim tuple malformed (slot 2)".to_string())?;
-        let owner = c2.head();
-        let tx_hash = c2.tail();
-
-        let chain_bundle = ClaimChainBundle {
-            raw_tx_jam: find_opaque_bytes_entry(note_data, CLAIM_NOTE_RAW_TX_KEY).ok(),
-            page_jam: find_opaque_bytes_entry(note_data, CLAIM_NOTE_PAGE_KEY).ok(),
-            block_proof_jam: find_opaque_bytes_entry(note_data, CLAIM_NOTE_BLOCK_PROOF_KEY).ok(),
-            header_chain_jam: find_opaque_bytes_entry(note_data, CLAIM_NOTE_HEADER_CHAIN_KEY).ok(),
-        };
 
         Ok(Self {
-            version,
-            claim_id,
-            name: atom_to_cord(name)?,
-            owner: atom_to_cord(owner)?,
-            tx_hash: atom_to_cord(tx_hash)?,
-            chain_bundle,
+            name: cord_field(&name_sn)?,
+            owner: cord_field(&owner_sn)?,
+            tx_hash: cord_field(&tx_hash_sn)?,
         })
     }
 }
 
-fn atom_to_cord(noun: nockvm::noun::Noun) -> Result<String, String> {
-    let atom = noun
-        .as_atom()
-        .map_err(|_| "claim tuple field is not an atom".to_string())?;
-    std::str::from_utf8(atom.as_ne_bytes())
-        .map(|s| s.trim_end_matches('\0').to_string())
+/// Cord (`@t`) fields are atoms; some encoders terminate the last field as `[atom ~]`.
+fn cord_field(sn: &ScopedNoun<'_>) -> Result<String, String> {
+    let leaf = if sn.is_atom() {
+        sn.clone()
+    } else {
+        let (head, tail) = sn.uncons()?;
+        let zero_tail = tail.as_u64_opt() == Some(0);
+        if !zero_tail {
+            return Err("claim tuple field is not an atom".to_string());
+        }
+        head
+    };
+    leaf.as_cord()
         .map_err(|e| format!("claim tuple field is not utf8: {e}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
 
     fn sample_note() -> ClaimNoteV1 {
         ClaimNoteV1 {
-            version: 1,
-            claim_id: "c-123".to_string(),
             name: "foo.nock".to_string(),
             owner: "owner-xyz".to_string(),
             tx_hash: "tx-abc".to_string(),
-            chain_bundle: ClaimChainBundle::default(),
         }
+    }
+
+    fn note_data_fixture(note: &ClaimNoteV1) -> NoteData {
+        let wire = crate::packed_blob::pack_wallet_blob_jam(&note.jam_tuple());
+        use nockchain_client_rs::jam_opaque_bytes_entry;
+        NoteData::new(vec![jam_opaque_bytes_entry(
+            CLAIM_NOTE_BLOB_ENTRY_KEY,
+            &wire,
+        )])
     }
 
     #[test]
     fn note_data_roundtrip_preserves_fields() {
         let note = sample_note();
-        let decoded = ClaimNoteV1::from_note_data(&note.to_note_data()).expect("decode");
-        assert_eq!(decoded.version, note.version);
-        assert_eq!(decoded.claim_id, note.claim_id);
-        assert_eq!(decoded.name, note.name);
-        assert_eq!(decoded.owner, note.owner);
-        assert_eq!(decoded.tx_hash, note.tx_hash);
-        assert_eq!(decoded.chain_bundle, ClaimChainBundle::default());
-        assert!(!decoded.chain_bundle.is_complete());
+        let decoded = ClaimNoteV1::from_note_data(&note_data_fixture(&note)).expect("decode");
+        assert_eq!(decoded, note);
     }
 
+    /// grpcurl sample `blob` base64 (`wXZA...`) — wallet-packed UTF-8 path, not a JAM triple.
     #[test]
-    fn chain_bundle_roundtrips_through_note_data() {
-        let bundle = ClaimChainBundle {
-            raw_tx_jam: Some(b"raw-tx-bytes".to_vec()),
-            page_jam: Some(b"page-bytes".to_vec()),
-            block_proof_jam: Some(vec![0u8, 1, 2, 3, 255]),
-            header_chain_jam: Some(b"header-chain-bytes".to_vec()),
-        };
-        assert!(bundle.is_complete());
-        let note = sample_note().with_chain_bundle(bundle.clone());
-        let decoded = ClaimNoteV1::from_note_data(&note.to_note_data()).expect("decode");
-        assert_eq!(decoded.chain_bundle, bundle);
-        assert!(decoded.chain_bundle.is_complete());
-    }
-
-    #[test]
-    fn partial_chain_bundle_is_not_complete() {
-        let partial = ClaimChainBundle {
-            raw_tx_jam: Some(b"a".to_vec()),
-            page_jam: None,
-            block_proof_jam: Some(b"b".to_vec()),
-            header_chain_jam: None,
-        };
-        let note = sample_note().with_chain_bundle(partial.clone());
-        let decoded = ClaimNoteV1::from_note_data(&note.to_note_data()).expect("decode");
-        assert_eq!(decoded.chain_bundle, partial);
-        assert!(!decoded.chain_bundle.is_complete());
+    fn grpcurl_fixture_blob_unpacks_to_claim_path() {
+        let wire = base64::engine::general_purpose::STANDARD
+            .decode("wXZAd3ObewO+XczLOOCzhaW1A/6L29s44K+NoYUDfpqbizvgvY2tBQ==")
+            .unwrap();
+        let inner = crate::packed_blob::unpack_wallet_blob_jam(&wire).expect("unpack");
+        assert_eq!(
+            std::str::from_utf8(&inner).unwrap(),
+            "nns/v1/claim/nockchain.nock"
+        );
+        let note = ClaimNoteV1::from_wallet_packed_blob_wire(&wire).expect("decode");
+        assert_eq!(note.name, "nockchain.nock");
+        assert!(note.owner.is_empty() && note.tx_hash.is_empty());
     }
 }
