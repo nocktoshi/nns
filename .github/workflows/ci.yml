@@ -14,7 +14,8 @@ env:
   CARGO_TERM_COLOR: always
   TRACY_NO_INVARIANT_CHECK: "1"
   NNS_KERNEL_JAM: ${{ github.workspace }}/nns/nns.jam
-  NNS_NOCK_STACK_SIZE: large
+  # ubuntu-latest (~7 GiB RAM) cannot mmap Large (~32 GiB). boot_stack_size() also checks CI=true.
+  NNS_NOCK_STACK_SIZE: small
 
 jobs:
   test:

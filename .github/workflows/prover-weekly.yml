@@ -11,7 +11,7 @@ env:
   CARGO_TERM_COLOR: always
   TRACY_NO_INVARIANT_CHECK: "1"
   NNS_KERNEL_JAM: ${{ github.workspace }}/nns/nns.jam
-  NNS_NOCK_STACK_SIZE: large
+  NNS_NOCK_STACK_SIZE: small
 
 jobs:
   prover:
