@@ -14,7 +14,6 @@ use std::sync::{Arc, Once};
 
 use base64::Engine;
 use nockapp::kernel::boot;
-use nockapp::kernel::boot::NockStackSize;
 use nockapp::wire::Wire;
 use nockapp_grpc::pb::common::v1::{Belt, Hash as PbHash, Nicks};
 use nockapp_grpc::pb::common::v2::{NoteData as PbNoteData, NoteDataEntry as PbNoteDataEntry};
@@ -227,7 +226,7 @@ async fn grpcurl_fixture_accumulator_inserts_claimed_name() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut cli = boot::default_boot_cli(true);
-    cli.stack_size = NockStackSize::Large;
+    cli.stack_size = nns::boot_stack_size();
     let prover_hot_state = zkvm_jetpack::hot::produce_prover_hot_state();
     let app = boot::setup(
         &kernel_jam(),

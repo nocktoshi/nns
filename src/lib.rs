@@ -101,6 +101,72 @@ pub fn apply_nns_config() {
     }
 }
 
+pub fn boot_stack_size() -> nockapp::kernel::boot::NockStackSize {
+    use nockapp::kernel::boot::NockStackSize;
+
+    let Some(raw) = std::env::var_os("NNS_NOCK_STACK_SIZE") else {
+        return NockStackSize::Large;
+    };
+    match raw.to_string_lossy().to_ascii_lowercase().as_str() {
+        "tiny" => NockStackSize::Tiny,
+        "small" => NockStackSize::Small,
+        "normal" => NockStackSize::Normal,
+        "medium" => NockStackSize::Medium,
+        "large" => NockStackSize::Large,
+        "huge" => NockStackSize::Huge,
+        other => {
+            eprintln!(
+                "warning: unknown NNS_NOCK_STACK_SIZE={other:?}, using large"
+            );
+            NockStackSize::Large
+        }
+    }
+}
+
+/// Release version from `Cargo.toml`.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// If argv contains `--version` / `-V` or `--help` / `-h`, print and return `true`.
+pub fn handle_early_cli() -> bool {
+    let mut show_help = false;
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--version" | "-V" => {
+                println!("ℕℕ𝕊 - Nockchain Name Service\nv{VERSION}");
+                return true;
+            }
+            "--help" | "-h" => show_help = true,
+            _ => {}
+        }
+    }
+    if show_help {
+        print_early_cli_help();
+        return true;
+    }
+    false
+}
+
+fn print_early_cli_help() {
+    eprintln!(
+        "\
+nns {VERSION} — Nockchain Name Service hull
+
+Usage:
+  nns                  Run the hull (HTTP API + chain follower)
+  nns --version, -V    Print version and exit
+  nns --help, -h       Print this help and exit
+
+Environment:
+  NNS_KERNEL_JAM       Path to nns.jam (default: nns.jam)
+  NNS_DATA_DIR         Parent dir for .nns-data/ (default: .)
+  NNS_CONFIG           Path to nns.toml (default: nns.toml)
+  API_PORT             HTTP port (default: 3000)
+  BIND_ADDR            HTTP bind address (default: 127.0.0.1)
+  NNS_NOCK_STACK_SIZE  Nock stack: tiny|small|normal|medium|large|huge
+"
+    );
+}
+
 pub mod api;
 pub mod chain;
 pub mod chain_follower;

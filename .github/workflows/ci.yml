@@ -14,6 +14,8 @@ env:
   CARGO_TERM_COLOR: always
   TRACY_NO_INVARIANT_CHECK: "1"
   NNS_KERNEL_JAM: ${{ github.workspace }}/nns/nns.jam
+  # ubuntu-latest (~7 GiB RAM) cannot mmap Large (~32 GiB). boot_stack_size() also checks CI=true.
+  NNS_NOCK_STACK_SIZE: normal
 
 jobs:
   test:
@@ -43,6 +45,17 @@ jobs:
           workspaces: nns
           cache-on-failure: true
 
+      - name: Cache Hoon kernel
+        uses: actions/cache@v4
+        with:
+          path: |
+            nns/nns.jam
+            nns/.cache
+            nns/hoon/packages
+          key: kernel-${{ hashFiles('nns/nockapp.toml', 'nns/hoon/app/**') }}
+          restore-keys: |
+            kernel-
+
       - name: Install hoonc and nockup
         run: |
           cargo +nightly install --git https://github.com/nocktoshi/nockchain.git --branch dev --locked hoonc
@@ -55,4 +68,6 @@ jobs:
         run: hoonc --new --arbitrary hoon/tests/names.hoon hoon/
 
       - name: Rust tests (fast)
+        env:
+          NNS_NOCK_STACK_SIZE: small
         run: cargo +nightly test

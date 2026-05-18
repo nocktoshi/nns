@@ -126,11 +126,12 @@ pub async fn serve(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let addr = format!("{bind}:{port}");
     let listener = TcpListener::bind(&addr).await?;
-    println!("Listening on http://{addr}");
+    println!("Available endpoints:");
     println!("  GET /health");
     println!("  GET /status");
     println!("  GET /accumulator/:name (?wallet_export=1)");
     println!("  GET /debug/kernel-state");
+    println!("✅ ℕℕ𝕊 server listening on http://{addr}");
     axum::serve(listener, router(state)).await?;
     Ok(())
 }

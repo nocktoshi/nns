@@ -11,6 +11,7 @@ env:
   CARGO_TERM_COLOR: always
   TRACY_NO_INVARIANT_CHECK: "1"
   NNS_KERNEL_JAM: ${{ github.workspace }}/nns/nns.jam
+  NNS_NOCK_STACK_SIZE: normal
 
 jobs:
   prover:
@@ -39,6 +40,17 @@ jobs:
         with:
           workspaces: nns
           cache-on-failure: true
+
+      - name: Cache Hoon kernel
+        uses: actions/cache@v4
+        with:
+          path: |
+            nns/nns.jam
+            nns/.cache
+            nns/hoon/packages
+          key: kernel-${{ hashFiles('nns/nockapp.toml', 'nns/hoon/app/**') }}
+          restore-keys: |
+            kernel-
 
       - name: Install hoonc and nockup
         run: |

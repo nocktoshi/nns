@@ -40,7 +40,6 @@ use nns::kernel::{
 use nns::payment::{fee_for_name, TREASURY_LOCK_ROOT_B58};
 use nns::{api, state::AppState};
 use nockapp::kernel::boot;
-use nockapp::kernel::boot::NockStackSize;
 use nockapp::wire::{SystemWire, Wire};
 use nockapp::NockApp;
 use nock_noun_rs::{cue_from_bytes, new_stack};
@@ -115,14 +114,14 @@ fn kernel_jam() -> Vec<u8> {
     }
 }
 
-/// Boot the NNS kernel with the STARK prover hot state. 32 GB nock
-/// stack; prover jets registered. Mirrors vesl's `boot_forge_with_prover`.
+/// Boot the NNS kernel with the STARK prover hot state and prover jets.
+/// Stack size from [`nns::boot_stack_size`] (`NNS_NOCK_STACK_SIZE`, default `large`).
 static TRACING_INIT: std::sync::Once = std::sync::Once::new();
 
 async fn boot_nns_with_prover() -> (tempfile::TempDir, nns::state::SharedState) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut cli = boot::default_boot_cli(true);
-    cli.stack_size = NockStackSize::Large;
+    cli.stack_size = nns::boot_stack_size();
     TRACING_INIT.call_once(|| {
         nns::apply_nns_config();
         let _ = boot::init_default_tracing(&cli);

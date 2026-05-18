@@ -10,6 +10,10 @@ use nockapp::NockApp;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if nns::handle_early_cli() {
+        return Ok(());
+    }
+
     nns::apply_nns_config();
 
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
@@ -17,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cli = boot::default_boot_cli(false);
     // Match integration tests: prover hot state + `%scan-block` Tip5 paths
     // use more Nock stack than the default CLI `Normal` size.
-    cli.stack_size = nockapp::kernel::boot::NockStackSize::Large;
+    cli.stack_size = nns::boot_stack_size();
     boot::init_default_tracing(&cli);
 
     // --- Load settlement + NNS config from nns.toml ---

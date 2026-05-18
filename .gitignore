@@ -1,4 +1,5 @@
 target/
+.cache/
 .nns-data/
 .DS_Store
 nns.jam
