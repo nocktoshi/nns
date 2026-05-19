@@ -1,12 +1,12 @@
 [[package]]
-name = "nockchain-jams"
-version = "commit:f1c7cd87883bd7883d06a898361884d1cb18f98e"
+name = "vesl-lib"
+version = "commit:556f707db7f896a032fba4fee87387f8e6e101d7"
 
 [package.source]
 type = "git"
-url = "https://github.com/nocktoshi/nockchain.git"
-commit = "f1c7cd87883bd7883d06a898361884d1cb18f98e"
-path = "hoon/jams"
+url = "https://github.com/nocktoshi/vesl-core.git"
+commit = "556f707db7f896a032fba4fee87387f8e6e101d7"
+path = "protocol/lib"
 
 [[package]]
 name = "nockchain-common"
@@ -19,14 +19,14 @@ commit = "f1c7cd87883bd7883d06a898361884d1cb18f98e"
 path = "hoon/common"
 
 [[package]]
-name = "vesl-lib"
-version = "commit:556f707db7f896a032fba4fee87387f8e6e101d7"
+name = "nockchain-jams"
+version = "commit:f1c7cd87883bd7883d06a898361884d1cb18f98e"
 
 [package.source]
 type = "git"
-url = "https://github.com/nocktoshi/vesl-core.git"
-commit = "556f707db7f896a032fba4fee87387f8e6e101d7"
-path = "protocol/lib"
+url = "https://github.com/nocktoshi/nockchain.git"
+commit = "f1c7cd87883bd7883d06a898361884d1cb18f98e"
+path = "hoon/jams"
 
 [[package]]
 name = "nockchain-dat"

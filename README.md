@@ -1,35 +1,20 @@
-# nns
+ℕℕ𝕊 — The Nockchain Name Service. 
 
 <img width="1376" height="768" alt="image" src="https://github.com/user-attachments/assets/d3361e4a-f783-4135-89bd-57a243ee7c67" />
 
- <br />
+ <br /> <br />
 
-NNS — the Nockchain Name Service. On-chain `.nock` name registrar,
-ported from the centralized Cloudflare Worker at `api.nocknames.com`
-to a Vesl-grafted NockApp.
 
-The hull is a **read-only chain scanner** — `GET /health`, `GET /status`, `GET /accumulator/:name` only. Users register `.nock` names by submitting **`nns/v1/claim`** notes to Nockchain; this HTTP service does **not** accept claim POSTs. Offline verification uses **`light_verify`** ([`docs/wallet-verification.md`](docs/wallet-verification.md): pinned checkpoint, headers, recursive STARK, accumulator snapshot — no live Nockchain RPC at verify time). **On-chain claims** need structured **NoteData** on outputs; see [`docs/claim-note-wallet-support.md`](docs/claim-note-wallet-support.md) and [nockchain#85](https://github.com/nockchain/nockchain/pull/85). Deeper architecture, proof model, and roadmap: [`ARCHITECTURE.md`](ARCHITECTURE.md).
+ℕℕ𝕊 is an on-chain registrar for .nock names on Nockchain. It tracks who owns which names by scanning the chain and building a verifiable accumulator of registrations.
+
+The hull is a **read-only chain scanner** — `GET /health`, `GET /status`, `GET /accumulator/:name` only. Users register `.nock` names by submitting **`nns/v1/claim`** notes to Nockchain; this HTTP service does **not** accept claim POSTs. Offline verification uses **`light_verify`** ([`docs/wallet-verification.md`](docs/wallet-verification.md): pinned checkpoint, headers, recursive STARK, accumulator snapshot — no live Nockchain RPC at verify time). **On-chain claims** need structured **NoteData** on outputs; see [`docs/claim-note-wallet-support.md`](docs/claim-note-wallet-support.md) and [nockchain#85](https://github.com/nockchain/nockchain/pull/85). Deeper architecture, proof model, and roadmap: [`ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Dependencies
 
 ```bash
 # Nightly Rust
 rustup toolchain install nightly
-
-# hoonc + nockup (Hoon dependency installer)
-cargo +nightly install --git https://github.com/nockchain/nockchain.git hoonc
-cargo +nightly install --path ~/nockchain/crates/nockup --locked   # or clone nockchain first
 ```
-
-`make install-kernel` (via `make install`) runs `nockup package install` from
-[`nockapp.toml`](nockapp.toml): Nockchain `hoon/` @ `ff6dd2d…` and Vesl libs from
-[nocktoshi/vesl-core `phase1-verifier-debug-and-type-fix`](https://github.com/nocktoshi/vesl-core/tree/phase1-verifier-debug-and-type-fix)
-(`protocol/lib` @ [`dc9382cd`](https://github.com/nocktoshi/vesl-core/commit/dc9382cd2110cb39561bf4abdc47d7d7f88029b5)).
-
- `make sync-hoon-from-nockup` copies from
-`hoon/packages/` into `hoon/common/`, `hoon/dat/`, and `hoon/lib/` (real files, no symlinks);
-`hoon/jams/` is vendored in-repo.
-No sibling clones required.
 
 ## Quick start
 
@@ -40,14 +25,23 @@ git clone https://github.com/nocktoshi/nns.git
 # one-time install (installs `nns` into ~/.local/bin)
 make install
 
-# run
+# start service
 nns
+
+# You should now see the nns service running
+
+#Available endpoints:
+#  GET /health
+#  GET /status
+#  GET /accumulator/:name (?wallet_export=1)
+#  GET /debug/kernel-state
+#✅ ℕℕ𝕊 server listening on http://127.0.0.1:3000
 ```
 
 `make install` also adds `export PATH="$HOME/.local/bin:$PATH"` to
 `~/.zshrc` automatically so `nns` resolves to the installed CLI. You may need to open a new shell.
 
-Once started:
+Check Service with cURL:
 
 ```bash
 curl -s http://127.0.0.1:3000/status | jq .
@@ -241,33 +235,48 @@ limitations are documented in [`ARCHITECTURE.md`](ARCHITECTURE.md) (§3–§11,
 
 ```
 hoon/
-  app/app.hoon              v0 kernel: accumulator + %scan-block + Vesl + STARK causes
-  lib/vesl-graft.hoon       graft state + dispatcher (copied from vesl)
-  lib/vesl-merkle.hoon      merkle primitives (hash-leaf, hash-pair, verify-chunk)
-  common/wrapper.hoon       state versioning
-  common/zeke.hoon          tip5 hash chain
-  common/ztd/               tip5 math tables
-  tests/names.hoon          compile-time domain invariant tests
-                            (G1 format + G2 Merkle inclusion across tree sizes)
+  app/                      NNS kernel sources (in repo)
+    app.hoon                v0 kernel: accumulator, %scan-block, Vesl graft, STARK causes
+    nns-accumulator.hoon    name z-map + scan cursor (`last-proved-height`, digest, …)
+    nns-predicates.hoon     dep-light claim predicates (G1 name rules, fee tiers, …)
+    names-test.hoon         compile-time domain tests (G1 format, G2 Merkle fixtures)
+    tx-witness.hoon         tx-shape helpers for witness / predicate paths
+    recursive-build.hoon    Y3 recursive proof build helpers
+    tracer.hoon             STARK trace tooling
+    tracer-parity.hoon      trace parity checks
+  common/ dat/ jams/ lib/   installed by `nockup` from pins in nockapp.toml
+    lib/vesl-*.hoon         Vesl graft, merkle, prover, STARK verifier (subset)
+    common/zeke.hoon        tip5 hash chain; wrapper.hoon state versioning; ztd/
+  packages/                 nockup download cache (per-commit trees)
 src/
-  main.rs                   entrypoint: boot kernel, load config, serve HTTP
-  lib.rs                    module wiring
-  api.rs                    read-only HTTP (`/status`, `/accumulator/...`)
-  kernel.rs                 NounSlab builders for peeks + read-only verify pokes
+  main.rs                   boot kernel, chain follower, HTTP server
+  lib.rs                    modules + `nns.toml` / tracing defaults
+  api.rs                    read-only HTTP (`/health`, `/status`, `/accumulator/...`)
+  kernel.rs                 NounSlab peeks + read-only verify pokes
   state.rs                  AppState + follower telemetry
-  payment.rs                fee tiers (shared helpers)
-  chain.rs                  chain RPC helpers for the follower
+  chain.rs                  RPC helpers + genesis height
   chain_follower.rs         block-by-block `%scan-block` driver
-  claim_note.rs             canonical claim-note NoteData schema helpers
-  wallet_y4.rs              lookup bundle types + header-chain verify (`light_verify`)
-  types.rs                  JSON / wire types (accumulator responses, etc.)
-  bin/light_verify.rs       offline verifier (checkpoint + headers + STARK + snapshot)
-scripts/
-  parity.py                 legacy vs new API diff tool
+  claim_note.rs             `nns/v1/claim` NoteData encode/decode
+  packed_blob.rs            wallet `%blob` / `%memo` belt decoding
+  payment.rs                fee-tier helpers
+  wallet_y4.rs              lookup bundles + header-chain verify (`light_verify`)
+  freshness.rs              wallet-side anchor freshness checks (stale-proof defense)
+  formula_nock.rs           Y3 formula opcode guards for Vesl prover limits
+  noun_access.rs            scoped noun accessors over nockvm handles
+  types.rs                  JSON / wire types
+  bin/light_verify.rs       offline verifier CLI (checkpoint + headers + STARK + snapshot)
+docs/                       ARCHITECTURE.md, wallet-verification.md, claim-note guides, …
 tests/
-  handlers.rs               full HTTP integration tests
-nns.toml                   settlement config
-Cargo.toml                  local path deps (../nockchain + ../vesl)
-nns.jam                     compiled kernel (built by hoonc)
+  handlers.rs               HTTP integration tests
+  phase*.rs, prover.rs, …   anchor, predicates, light_verify, scan-order, grpc fixtures
+  common/mod.rs             shared test helpers
+  fixtures/                 wire blobs for grpcurl claim tests
+.github/workflows/          ci.yml, prover-weekly.yml
+Makefile                    `make install`, kernel compile (`hoonc`), `~/.local/bin` wrapper
+nockapp.toml                nockup Hoon dependency pins (nockchain + vesl-core commits)
+nockapp.lock                resolved nockup install manifest
+nns.toml                    runtime config (settlement mode, chain RPC, `[tracing_env]`)
+Cargo.toml                  Rust deps (`nocktoshi/nockchain` + `vesl-core`, `dev` branch)
+nns.jam                     compiled kernel artifact (`make compile-kernel`)
 ```
 

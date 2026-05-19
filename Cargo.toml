@@ -44,14 +44,3 @@ tokio = { version = "1.32", features = ["rt-multi-thread", "macros", "test-util"
 tower = { version = "0.4", features = ["util"] }
 tempfile = "3"
 base64 = "0.22"
-
-# vesl-core path deps → nockchain; route through the same dev branch.
-[patch."https://github.com/nocktoshi/vesl-core.git"]
-nockapp = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
-nockvm = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
-nockvm_macros = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
-nockapp-grpc = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
-nockchain-types = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
-nockchain-math = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
-noun-serde = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev" }
-ibig = { git = "https://github.com/nocktoshi/nockchain.git", branch = "dev", package = "ibig" }

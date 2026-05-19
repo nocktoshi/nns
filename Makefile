@@ -10,20 +10,38 @@ KERNEL_JAM := nns.jam
 KERNEL_CACHE := .cache
 KERNEL_BUILT_HASH := $(KERNEL_CACHE)/kernel-built.hash
 NOCKUP_INSTALLED := hoon/packages/.installed
+NOCKCHAIN_GIT := https://github.com/nocktoshi/nockchain.git
+NOCKCHAIN_BRANCH := dev
 
 VESL_LIB_NAMES := vesl-graft vesl-merkle vesl-prover vesl-stark-verifier vesl-verifier
 
 .PHONY: install install-rust uninstall install-kernel install-bin-lib install-wrappers \
-	compile-kernel kernel compute-kernel-hash clean-kernel force-kernel
+	install-hoon-tools compile-kernel kernel compute-kernel-hash clean-kernel force-kernel
 
-$(NOCKUP_INSTALLED): nockapp.toml
+# Install hoonc + nockup from nocktoshi/nockchain when not already on PATH.
+install-hoon-tools:
+	@set -e; \
+	if command -v hoonc >/dev/null 2>&1; then \
+	  echo "✅ hoonc already installed ($$(command -v hoonc))"; \
+	else \
+	  echo "Installing hoonc ($(NOCKCHAIN_GIT)@$(NOCKCHAIN_BRANCH))..."; \
+	  cargo +nightly install --git $(NOCKCHAIN_GIT) --branch $(NOCKCHAIN_BRANCH) --locked hoonc; \
+	fi; \
+	if command -v nockup >/dev/null 2>&1; then \
+	  echo "✅ nockup already installed ($$(command -v nockup))"; \
+	else \
+	  echo "Installing nockup ($(NOCKCHAIN_GIT)@$(NOCKCHAIN_BRANCH))..."; \
+	  cargo +nightly install --git $(NOCKCHAIN_GIT) --branch $(NOCKCHAIN_BRANCH) --locked nockup; \
+	fi
+
+$(NOCKUP_INSTALLED): nockapp.toml install-hoon-tools
 	@echo "nockup package install..."
 	nockup install
 	@mkdir -p hoon/packages
 	@touch $@
 
-# Full install: compile Hoon kernel (nns.jam) then Rust release binary + wrappers.
-install: install-kernel install-bin-lib install-wrappers
+# Full install: hoon toolchain (if needed), kernel, Rust binary, wrappers.
+install: install-hoon-tools install-kernel install-bin-lib install-wrappers
 
 # Rust only: skip nockup + hoonc. Uses existing ./nns.jam (run `make install-kernel`
 # or full `make install` when the kernel changes).
@@ -64,7 +82,7 @@ compute-kernel-hash:
 	  find hoon/app hoon/common hoon/dat hoon/lib hoon/jams -type f 2>/dev/null | sort | while IFS= read -r f; do cat "$$f"; done; \
 	} | shasum -a 256 | awk '{print $$1}'
 
-install-kernel: compile-kernel
+install-kernel: install-hoon-tools compile-kernel
 	@test -s "$(KERNEL_JAM)" || { echo "❌ missing $(KERNEL_JAM); kernel compile failed" >&2; exit 1; }
 	@echo "Installing Hoon kernel..."
 	install -d "$(DESTDIR)$(LIBDIR)"
@@ -85,6 +103,7 @@ install-bin-lib:
 	cargo +nightly build --release
 	install -d "$(DESTDIR)$(BINDIR)" "$(DESTDIR)$(LIBDIR)"
 	install -m 755 "target/release/nns" "$(DESTDIR)$(BIN)"
+	@echo "✅ Installed Rust binary to $(DESTDIR)$(BIN)"
 
 install-wrappers:
 	printf '#!/usr/bin/env sh\nexport TRACY_NO_INVARIANT_CHECK=1\nexport NNS_KERNEL_JAM=%s/nns.jam\nexec %s "$$@"\n' \
