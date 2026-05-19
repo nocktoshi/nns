@@ -30,6 +30,7 @@ files = [
   "v2/table/prover/memory",
   "v2/table/verifier/compute",
   "v2/table/verifier/memory",
+  "slip10",
   "ztd/one",
   "ztd/two",
   "ztd/three",
