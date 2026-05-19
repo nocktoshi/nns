@@ -126,12 +126,22 @@ pub async fn serve(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let addr = format!("{bind}:{port}");
     let listener = TcpListener::bind(&addr).await?;
-    println!("Available endpoints:");
-    println!("  GET /health");
-    println!("  GET /status");
-    println!("  GET /accumulator/:name (?wallet_export=1)");
-    println!("  GET /debug/kernel-state");
-    println!("✅ ℕℕ𝕊 server listening on http://{addr}");
+    let version = env!("CARGO_PKG_VERSION");
+    println!("*****************************************");
+    println!("***\x1b[92m             ℕℕ𝕊                   \x1b[0m***");
+    println!("***  — 𝕋he ℕockchain ℕame 𝕊ervice. -  ***");
+    println!("***    v{version}  -  https://nns.id      ***");
+    println!("*****************************************");
+    println!("*");
+    println!("* \x1b[92m✅ ℕℕ𝕊 server running at: http://{addr}\x1b[0m");
+    println!("*");
+    println!("* Available endpoints:");
+    println!("*  GET /health");
+    println!("*  GET /status");
+    println!("*  GET /accumulator/:name (?wallet_export=1)");
+    println!("*  GET /debug/kernel-state");  
+    println!("*");
+    println!("*****************************************");
     axum::serve(listener, router(state)).await?;
     Ok(())
 }

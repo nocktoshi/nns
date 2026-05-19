@@ -40,8 +40,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None, // default_signing_key (unused for local)
     );
 
-    println!("=== ℕℕ𝕊 — 𝕋he ℕockchain ℕame 𝕊ervice. ===");
-    println!("  version: {}", env!("CARGO_PKG_VERSION"));
     println!("  settlement mode: {}", settlement.mode);
     println!(
         "  ℕℕ𝕊 genesis height (protocol): {}",
@@ -95,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let serve_result = tokio::select! {
         r = api::serve(state.clone(), port, &bind) => r,
         _ = shutdown_signal() => {
-            println!("ℕℕ𝕊 — shutdown signal received, goodbye...");
+            println!("ℕℕ𝕊 — 👋 Goodbye...");
             Ok(())
         }
     };

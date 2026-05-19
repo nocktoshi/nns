@@ -5,7 +5,6 @@
 //! `NockApp`.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use nockapp::NockApp;
@@ -88,9 +87,6 @@ impl FollowerObservability {
 pub struct AppState {
     pub kernel: Mutex<NockApp>,
     pub hull: Mutex<HullState>,
-    /// Count of successful follower `%scan-block` steps since the last
-    /// on-disk kernel checkpoint (used to batch `save_blocking`).
-    follower_scans_since_checkpoint: AtomicU64,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -105,7 +101,6 @@ impl AppState {
                 nns_genesis_height: crate::chain::NNS_GENESIS_HEIGHT.max(1),
                 follower: FollowerObservability::default(),
             }),
-            follower_scans_since_checkpoint: AtomicU64::new(0),
         }
     }
 

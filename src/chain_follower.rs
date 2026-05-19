@@ -491,8 +491,6 @@ async fn apply_prefetched_scan_blocks_inner(
             // Y3: attempt recursive transition for the block we just successfully scanned
             try_y3_recursive_transition_after_block(state, &block, &claims).await;
 
-            state.maybe_persist_after_follower_scan().await;
-
             tracing::debug!(
                 height = done.height,
                 block_digest = %atom_hex_preview(&done.digest, 16),
