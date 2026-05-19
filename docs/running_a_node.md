@@ -1,5 +1,8 @@
 # Running an NNS Node
 
+<img width="381" height="314" alt="image" src="https://github.com/user-attachments/assets/6a360b70-bb30-410c-b51f-b6fa61130344" />
+
+
 Bare-minimum operator runbook — how to install, configure, run, and
 monitor an NNS node. Everything below assumes a recent macOS or Linux
 host with `cargo +nightly` available.
