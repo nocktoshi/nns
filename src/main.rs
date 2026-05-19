@@ -93,7 +93,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let serve_result = tokio::select! {
         r = api::serve(state.clone(), port, &bind) => r,
         _ = shutdown_signal() => {
-            println!("ℕℕ𝕊 — 👋 Goodbye...");
+            println!("*****************************************");
+            println!("* \x1b[92mℕℕ𝕊 — 👋 Goodbye...\x1b[0m");
+            println!("*****************************************");
             Ok(())
         }
     };
