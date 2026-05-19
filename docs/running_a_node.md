@@ -18,11 +18,9 @@ For the full architecture and design rationale, see
 # clone nns repo (Hoon deps fetched by nockup — see nockapp.toml)
 git clone https://github.com/nocktoshi/nns.git
 cd nns
-make install                                  # builds kernel + nns binary
+make install             # builds kernel + nns binary
 # start server
-nns                                           # starts on 127.0.0.1:3000
-# check status 
-curl -s http://127.0.0.1:3000/status | jq .
+nns                      # starts on 127.0.0.1:3000
 ```
 
 ---
