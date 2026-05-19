@@ -1,13 +1,13 @@
-ℕℕ𝕊 — The Nockchain Name Service. 
+ℕℕ𝕊 — 𝕋he ℕockchain ℕame 𝕊ervice.
 
 <img width="1376" height="768" alt="image" src="https://github.com/user-attachments/assets/d3361e4a-f783-4135-89bd-57a243ee7c67" />
 
  <br /> <br />
 
 
-ℕℕ𝕊 is an on-chain registrar for .nock names on Nockchain. It tracks who owns which names by scanning the chain and building a verifiable accumulator of registrations.
+ℕℕ𝕊 is an on-chain registrar for .nock names on ℕockchain. It tracks who owns which names by scanning the chain and building a verifiable accumulator of registrations.
 
-The hull is a **read-only chain scanner** — `GET /health`, `GET /status`, `GET /accumulator/:name` only. Users register `.nock` names by submitting **`nns/v1/claim`** notes to Nockchain; this HTTP service does **not** accept claim POSTs. Offline verification uses **`light_verify`** ([`docs/wallet-verification.md`](docs/wallet-verification.md): pinned checkpoint, headers, recursive STARK, accumulator snapshot — no live Nockchain RPC at verify time). **On-chain claims** need structured **NoteData** on outputs; see [`docs/claim-note-wallet-support.md`](docs/claim-note-wallet-support.md) and [nockchain#85](https://github.com/nockchain/nockchain/pull/85). Deeper architecture, proof model, and roadmap: [`ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+The hull is a **read-only chain scanner** — `GET /health`, `GET /status`, `GET /accumulator/:name` only. Users register `.nock` names by submitting **`nns/v1/claim`** notes to ℕockchain; this HTTP service does **not** accept claim POSTs. Offline verification uses **`light_verify`** ([`docs/wallet-verification.md`](docs/wallet-verification.md): pinned checkpoint, headers, recursive STARK, accumulator snapshot — no live ℕockchain RPC at verify time). **On-chain claims** need structured **NoteData** on outputs; see [`docs/claim-note-wallet-support.md`](docs/claim-note-wallet-support.md) and [nockchain#85](https://github.com/nockchain/nockchain/pull/85). Deeper architecture, proof model, and roadmap: [`ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Dependencies
 
@@ -85,7 +85,7 @@ can), but whether **every** honest node applies the **same** ordered stream of
 on-chain claims.
 
 Without a shared order source, two nodes could each accept conflicting first
-claims for the same name. **Nockchain** provides a single global order. The
+claims for the same name. **ℕockchain** provides a single global order. The
 follower walks blocks in height order and applies **`%scan-block`** so the
 accumulator fold matches what every other honest follower sees.
 
@@ -109,7 +109,7 @@ attempts for the same name).
 later conflicting claims when replayed in canonical chain order.
 - Reuse one payment for multiple successful claims: kernel C4 rejects reused
 `tx-hash` values.
-- Rewrite chain ordering for honest nodes: canonical `(block_height, tx_index_in_block)` comes from Nockchain data.
+- Rewrite chain ordering for honest nodes: canonical `(block_height, tx_index_in_block)` comes from ℕockchain data.
 - Make honest nodes converge to different final states if they replay the same
 chain data with the same kernel rules.
 
@@ -227,7 +227,7 @@ cargo +nightly run --bin light_verify -- --help
 
 Vesl graft state (`registered`, `settled`) lives inside the kernel fragment.
 **HTTP does not drive settlement** on this hull — recursive STARK goals,
-`nns-gate` scope, settlement posting to Nockchain, and upstream prover
+`nns-gate` scope, settlement posting to ℕockchain, and upstream prover
 limitations are documented in [`ARCHITECTURE.md`](ARCHITECTURE.md) (§3–§11,
 §14).
 

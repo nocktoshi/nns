@@ -120,47 +120,6 @@ impl AppState {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0)
     }
-
-    /// Full flush hook on shutdown. Current `nockapp` persists checkpoints
-    /// inside the serf loop during normal pokes; there is no public
-    /// `save_blocking` API to call from the hull.
-    pub async fn persist_all(&self) {
-        tracing::debug!("persist_all: nockapp checkpoints during kernel pokes (no explicit flush API)");
-    }
-
-    /// Batched persist stride hook after follower `%scan-block`. Checkpoints
-    /// are written by `nockapp` during pokes; this only tracks scan count for
-    /// observability when `NNS_FOLLOWER_PERSIST_EVERY` is set.
-    pub async fn maybe_persist_after_follower_scan(&self) {
-        let stride = follower_persist_stride_blocks();
-        let prev = self
-            .follower_scans_since_checkpoint
-            .fetch_add(1, Ordering::Relaxed);
-        let n = prev + 1;
-        if stride > 1 && n < stride {
-            tracing::trace!(
-                n,
-                stride,
-                "follower: batched persist stride (checkpoints handled by nockapp during pokes)"
-            );
-            return;
-        }
-        self.follower_scans_since_checkpoint
-            .store(0, Ordering::Relaxed);
-        tracing::trace!("follower: persist stride reached (nockapp serf checkpoints on poke)");
-    }
-}
-
-/// Blocks between on-disk kernel checkpoints during follower catch-up.
-/// `1` = same as checkpointing every block (legacy behaviour).
-fn follower_persist_stride_blocks() -> u64 {
-    match std::env::var("NNS_FOLLOWER_PERSIST_EVERY") {
-        Ok(s) => match s.parse::<u64>() {
-            Ok(n) if n >= 1 => n,
-            _ => 1000,
-        },
-        Err(_) => 1000,
-    }
 }
 
 /// Encode raw atom bytes as lowercase hex. Kept local (no extra

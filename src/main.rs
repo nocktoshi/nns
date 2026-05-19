@@ -40,10 +40,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None, // default_signing_key (unused for local)
     );
 
-    println!("=== nns ===");
+    println!("=== ℕℕ𝕊 — 𝕋he ℕockchain ℕame 𝕊ervice. ===");
+    println!("  version: {}", env!("CARGO_PKG_VERSION"));
     println!("  settlement mode: {}", settlement.mode);
     println!(
-        "  nns genesis height (protocol): {}",
+        "  ℕℕ𝕊 genesis height (protocol): {}",
         nns::chain::NNS_GENESIS_HEIGHT
     );
 
@@ -57,10 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the env-configured parent as `data_dir` and `".nns-data"` as
     // the app name to `boot::setup`, which internally joins them
     // to produce `$NNS_DATA_DIR/.nns-data/checkpoints/` and
-    // `$NNS_DATA_DIR/.nns-data/pma/`. The mirror JSON sits
-    // alongside them in the same `.nns-data` dir so everything
-    // the hull writes at runtime is contained in one folder,
-    // separate from the source tree.
+    // `$NNS_DATA_DIR/.nns-data/pma/`.
     let data_parent = PathBuf::from(std::env::var("NNS_DATA_DIR").unwrap_or_else(|_| ".".into()));
     let state_dir = data_parent.join(".nns-data");
     fs::create_dir_all(&state_dir)?;
@@ -94,32 +92,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(3000);
     let bind: String = std::env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1".into());
 
-    // We don't drive `NockApp::run()` (pokes happen directly from
-    // axum handlers via the shared mutex), so nockapp's built-in
-    // periodic save tick and save-on-exit paths never fire. We
-    // compensate in two places:
-    //
-    //   1. HTTP handlers that poke call `AppState::persist_all` inline.
-    //      The chain follower uses `maybe_persist_after_follower_scan`
-    //      instead (batched full checkpoints — see `NNS_FOLLOWER_PERSIST_EVERY`).
-    //   2. Here — race `api::serve` against SIGINT/SIGTERM and flush
-    //      once more on shutdown so any follower batches since the last
-    //      checkpoint are written before exit.
-    //
-    // Errors from the final flush are logged but swallowed: the
-    // signal already committed us to exiting, and any prior
-    // successful poke was already persisted by path (1).
     let serve_result = tokio::select! {
         r = api::serve(state.clone(), port, &bind) => r,
         _ = shutdown_signal() => {
-            println!("shutdown signal received, flushing state...");
+            println!("ℕℕ𝕊 — shutdown signal received, goodbye...");
             Ok(())
         }
     };
-
-    {
-        state.persist_all().await;
-    }
 
     serve_result
 }
